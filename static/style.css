@@ -316,6 +316,10 @@ button:hover { background: #1e483d; }
 .embedding-panel select:focus-visible { outline: 3px solid #a2cbb5; outline-offset: 3px; }
 .embedding-result { margin-top: 24px; }
 .embedding-downloads { display: flex; flex-wrap: wrap; gap: 10px 24px; }
+.colab-export { margin-top: 24px; padding: 18px 20px; border: 1px solid var(--line); border-radius: 9px; background: #f3f8f2; }
+.colab-export h3 { margin: 0 0 10px; font-size: 16px; }
+.colab-export p { margin: 0 0 14px; font-size: 14px; }
+.colab-export .colab-note { margin: 14px 0 0; color: var(--muted); font-size: 13px; }
 .embedding-provenance { margin-top: 12px; }
 .embedding-provenance summary, .embedding-history summary { color: var(--accent); cursor: pointer; }
 .embedding-representation { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--line); }

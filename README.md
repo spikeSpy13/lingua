@@ -181,7 +181,15 @@ continuam funcionando com as dependências originais e sem baixar esse modelo.
 Para instalar as dependências de embeddings, recomendamos Python 3.10 a 3.12
 por compatibilidade com as versões fixadas de PyTorch e Transformers.
 
-No macOS ou Linux, dentro de `linguaSpike`:
+No macOS, dentro de `linguaSpike`:
+
+```bash
+.venv/bin/python -m pip install -r requirements-embeddings.txt
+.venv/bin/python -m embeddings_e5 preparar --modelo intfloat/multilingual-e5-large --revisao main --baixar
+.venv/bin/python app.py
+```
+
+No Linux, para CPU:
 
 ```bash
 .venv/bin/python -m pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
@@ -214,6 +222,13 @@ executam novamente o modelo.
 
 Veja [instalação, configuração CPU/GPU, contrato e API](docs/vetorizacao.md)
 e a [especificação consolidada da etapa 09](docs/especificacao_etapa09.md).
+
+Para executar a etapa 09 no Google Colab, use **Baixar notebook Colab** e
+**Baixar pacote Colab ZIP** no painel de vetorização. Abra o notebook no Colab,
+envie o ZIP quando solicitado e execute as células na ordem. O notebook
+permite CPU ou GPU e baixa os resultados com sua origem preservada. Esse
+fluxo não exige instalar o E5 no computador local. Veja o
+[passo a passo do Colab](docs/colab.md).
 
 ## Dados locais
 

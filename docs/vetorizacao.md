@@ -24,7 +24,16 @@ versões fixadas, recomendamos Python 3.10 a 3.12; a faixa aceita pelas
 dependências anteriores não garante disponibilidade dos mesmos wheels de
 PyTorch para todas as versões de Python.
 
-Com o aplicativo encerrado, dentro de `linguaSpike`, no macOS ou Linux:
+Com o aplicativo encerrado, dentro de `linguaSpike`, no macOS:
+
+```bash
+git pull --ff-only origin main
+.venv/bin/python -m pip install -r requirements-embeddings.txt
+.venv/bin/python -m embeddings_e5 preparar --modelo intfloat/multilingual-e5-large --revisao main --baixar
+.venv/bin/python app.py
+```
+
+No Linux, para CPU:
 
 ```bash
 git pull --ff-only origin main
@@ -283,6 +292,12 @@ Sua natureza é `simulado_teste`, `validacao.inferencia_real` é `false` e
 precisa de inferência real e vetores presentes para receber prontidão de uso.
 
 ## Interface, persistência e API HTTP
+
+O painel também permite **Baixar notebook Colab** e **Baixar pacote Colab
+ZIP** para gerar os vetores no Google Colab, em CPU ou GPU. A exportação
+revalida a execução contextual selecionada, inclui sua origem exata e não
+carrega o modelo no computador local. O notebook baixa resultados JSON e
+ZIP com os contratos da etapa 09. Veja [como executar no Colab](colab.md).
 
 No aplicativo, escolha uma execução contextual pronta e use **Vetorizar
 conteúdo e unidades**. O painel apresenta modelo, configuração,

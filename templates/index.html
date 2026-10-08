@@ -662,6 +662,16 @@
           </form>
           <p class="local-processing">O modelo configurado pode usar CPU ou GPU. Textos longos são divididos em blocos completos; uma média agregada pode perder relações e ordem entre blocos.</p>
 
+          <div class="colab-export" aria-labelledby="colab-title">
+            <h3 id="colab-title">Executar a vetorização no Google Colab</h3>
+            <p>Baixe os dois arquivos, abra o notebook no Google Colab e envie o ZIP quando solicitado. No notebook, você pode escolher CPU ou GPU e ajustar a finalidade dos vetores e a agregação.</p>
+            <div class="embedding-downloads">
+              <a class="download-link" href="{{ url_for('colab_notebook', record_id=record.id, contexto_execucao_id=contextualized.execucao_id) }}">Baixar notebook Colab <span aria-hidden="true">↓</span></a>
+              <a class="download-link" href="{{ url_for('colab_package', record_id=record.id, contexto_execucao_id=contextualized.execucao_id) }}">Baixar pacote Colab ZIP <span aria-hidden="true">↓</span></a>
+            </div>
+            <p class="colab-note">O ZIP inclui o texto e as anotações desta execução de contexto para processamento no Colab. A configuração pode ser ajustada no notebook antes de gerar os vetores.</p>
+          </div>
+
           {% if vectorized|default(none) %}
           <div class="embedding-result">
             {% if vectorized.estado|default('concluida') == 'falhou' %}

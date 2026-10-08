@@ -53,6 +53,7 @@ from vetorizacao import (
     consultar_representacao,
 )
 from embeddings_e5 import criar_gerador_padrao
+from exportacao_colab import exportar_notebook, exportar_pacote_colab
 from persistencia_vetores import (
     ErroPersistenciaVetores,
     criar_tabelas as criar_tabelas_vetores,
@@ -1106,6 +1107,56 @@ def create_app(config=None):
             except (ErroPreparacao, ErroSegmentacao, ErroAnotacao, ErroAnalise, ErroRegras, ErroContexto) as error:
                 return {"erro": str(error)}, 409
         return Response(json.dumps(unit, ensure_ascii=False, allow_nan=False), mimetype="application/json")
+
+    def selected_colab_context(record_id):
+        """Confere a execução exata antes de disponibilizar a exportação."""
+        if set(request.args) != {"contexto_execucao_id"} or len(request.args.getlist("contexto_execucao_id")) != 1:
+            return None, ({"erro": "Selecione uma única execução contextual para exportar ao Colab."}, 400)
+        execution_id = request.args["contexto_execucao_id"]
+        if not execution_id.strip():
+            return None, ({"erro": "Selecione uma única execução contextual para exportar ao Colab."}, 400)
+        try:
+            with closing(connect_database(app.config["DATABASE"])) as connection:
+                document = connection.execute("SELECT * FROM submissions WHERE id = ?", (record_id,)).fetchone()
+                if document is None:
+                    abort(404)
+                contextualized = latest_context_run(connection, document, execution_id=execution_id)
+                if contextualized is None:
+                    return None, ({"erro": "Execução contextual não encontrada."}, 404)
+                readiness = validar_unidades_contexto(contextualized)
+                if not readiness["pronto_para_etapa_09"]:
+                    return None, ({"erro": "A execução contextual ainda não está pronta para a etapa 09."}, 409)
+        except (ErroPreparacao, ErroSegmentacao, ErroAnotacao, ErroAnalise, ErroRegras, ErroContexto) as error:
+            return None, ({"erro": str(error)}, 409)
+        return contextualized, None
+
+    @app.get("/envios/<int:record_id>/colab.ipynb")
+    def colab_notebook(record_id):
+        contextualized, failure = selected_colab_context(record_id)
+        if failure is not None:
+            return failure
+        return Response(
+            exportar_notebook(), mimetype="application/x-ipynb+json",
+            headers={"Content-Disposition": 'attachment; filename="lingua-colab.ipynb"'},
+        )
+
+    @app.get("/envios/<int:record_id>/colab.zip")
+    def colab_package(record_id):
+        contextualized, failure = selected_colab_context(record_id)
+        if failure is not None:
+            return failure
+        try:
+            package = exportar_pacote_colab(contextualized, configuracao=app.config["EMBEDDING_CONFIGURATION"])
+        except ErroVetorizacaoLimite as error:
+            return {"erro": str(error)}, 413
+        except ErroVetorizacaoConfiguracao as error:
+            return {"erro": str(error)}, 400
+        except ErroVetorizacaoEntrada as error:
+            return {"erro": str(error)}, 409
+        return Response(
+            package, mimetype="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="lingua-colab-{record_id}.zip"'},
+        )
 
     @app.post("/envios/<int:record_id>/vetorizacoes")
     def vectorize_submission(record_id):
