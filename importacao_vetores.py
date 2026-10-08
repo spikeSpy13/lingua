@@ -17,7 +17,7 @@ from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
 
 from contratos_vetorizacao import canonico
 from vetorizacao import (
-    ETAPA, MAX_BLOCOS, MAX_REPRESENTACOES, SCHEMA_VERSION,
+    ETAPA, MAX_BLOCOS, MAX_REPRESENTACOES, SCHEMA_VERSIONS,
     validar_vetorizacao,
 )
 
@@ -241,7 +241,7 @@ def _plano(manifesto, permitir_simulado):
             and manifesto["formato"] == "lingua_etapa09_zip"
             and manifesto["versao"] == "1.0.0", "Contrato do manifesto não suportado.")
     registro = manifesto["registro"]
-    _exigir(type(registro) is dict and registro.get("schema_version") == SCHEMA_VERSION
+    _exigir(type(registro) is dict and registro.get("schema_version") in SCHEMA_VERSIONS
             and registro.get("etapa") == ETAPA, "Contrato da etapa 09 não suportado.")
     _exigir(type(registro.get("validacao")) is dict
             and registro["validacao"].get("estado") == "valido",

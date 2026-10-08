@@ -360,7 +360,7 @@ files.download(str(zip_resultado))  # Inclui JSON completo, manifesto e vetores 
             _celula("code", instalacao),
             _celula("markdown", "## 4. Preparar o E5 em uma revisão oficial fixa\n\nO download pode levar alguns minutos. Nenhuma revisão provisória é usada.\n"),
             _celula("code", modelo),
-            _celula("markdown", "## 5. Vetorizar e validar\n\nSão preservadas a origem integral, as seleções contextuais, os blocos e a configuração efetiva.\n"),
+            _celula("markdown", "## 5. Vetorizar e validar\n\nGera vetores do foco, da janela, de cada parágrafo e do documento integral. São preservadas a origem integral, as seleções contextuais, os blocos e a configuração efetiva.\n"),
             _celula("code", inferencia),
             _celula("markdown", "## 6. Baixar os resultados\n\nO ZIP contém `vetorizacao.json` completo, vetores float32 e manifestos com hashes. A sessão do Colab é temporária: baixe os resultados antes de encerrá-la.\n"),
             _celula("code", download),

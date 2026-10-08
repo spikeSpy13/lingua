@@ -99,7 +99,7 @@ Conte tokens antes da inferência com truncamento desativado, incluindo
 prefixo e tokens especiais. Confira também a sequência enviada efetivamente
 ao modelo. A política inicial usa um orçamento máximo de 512 tokens de
 entrada; o orçamento configurado não pode ultrapassar a capacidade declarada
-do mecanismo. A verificação se aplica ao foco, à janela e ao documento.
+do mecanismo. A verificação se aplica ao foco, à janela, aos parágrafos e ao documento.
 
 Quando houver excesso, divida em blocos contíguos sem sobreposição,
 utilizando recortes do texto canônico. Não detokenize os IDs para reconstruir
@@ -175,7 +175,7 @@ baixar registros não deve carregar ou executar o modelo.
 O validador deve revalidar a etapa 08 uma vez e verificar:
 
 - prontidão efetiva e preservação integral da origem;
-- associação de cada foco e janela e cobertura do documento;
+- associação de cada foco, janela e parágrafo e cobertura do documento;
 - textos, recortes, hashes e intervalos originais;
 - configuração, perfil e identidades lógicas;
 - entradas e sequência de tokens declaradas;
@@ -199,7 +199,7 @@ determinístico, identificado como tal. As expectativas de recortes, hashes,
 seleções e agregação devem ter referências independentes do produtor.
 
 Cubra entrada inválida ou não pronta, fonte preservada, Unicode/CRLF,
-limites próximos ao orçamento, excesso nos três campos, ausência de
+limites próximos ao orçamento, excesso nos quatro tipos, ausência de
 truncamento, blocos e pesos, configuração incompatível, dimensões e bytes
 adulterados, reutilização correta, falhas intermediárias, históricos,
 exportação e recuperação após reinício com SQLite temporário.

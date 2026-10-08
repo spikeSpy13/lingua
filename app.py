@@ -67,6 +67,7 @@ from persistencia_vetores import (
     exportar_zip as exportar_vetores_zip,
     json_canonico,
 )
+from interface_narrativas import bp as narrativas_blueprint, criar_tabela as criar_tabela_narrativas
 
 
 BASE = Path(__file__).resolve().parent
@@ -498,6 +499,9 @@ def create_app(config=None):
         app.config.update(config)
     if app.config.get("EMBEDDING_GENERATOR_FACTORY") is not None and not app.config["TESTING"]:
         raise ValueError("O gerador injetado de embeddings é permitido somente em TESTING.")
+    if app.config.get("NARRATIVE_GENERATOR") is not None and not app.config["TESTING"]:
+        raise ValueError("O gerador narrativo injetado é permitido somente em TESTING.")
+    app.register_blueprint(narrativas_blueprint)
 
     @app.template_filter("horario_brasilia")
     def display_time(value):
@@ -594,6 +598,7 @@ def create_app(config=None):
             "CREATE INDEX IF NOT EXISTS context_runs_rules ON context_runs (submission_id, rule_execution_id, id)"
         )
         criar_tabelas_vetores(connection)
+        criar_tabela_narrativas(connection)
         connection.execute(
             """CREATE TABLE IF NOT EXISTS embedding_imports (
                 execution_id TEXT PRIMARY KEY REFERENCES embedding_runs(execution_id),

@@ -1,7 +1,7 @@
 # Etapa 09: vetorizar conteúdo e unidades
 
-A etapa 09 recebe uma saída validada e pronta da etapa 08 e gera três tipos
-de representação: foco de cada unidade, janela de cada unidade e documento
+A etapa 09 recebe uma saída validada e pronta da etapa 08 e gera quatro tipos
+de representação: foco de cada unidade, janela de cada unidade, cada parágrafo e documento
 integral de trabalho. Cada associação aponta para a origem exata, o campo
 textual e sua configuração. A origem contextual completa é preservada uma
 vez por execução, sem modificar análises linguísticas ou textos anteriores.
@@ -189,7 +189,7 @@ registros incompletos à prontidão.
 
 ## Finalidades e compatibilidade com outros sistemas
 
-O perfil `recuperacao` usa `passage: ` para foco, janela e documento; o perfil
+O perfil `recuperacao` usa `passage: ` para foco, janela, parágrafo e documento; o perfil
 `consulta` usa `query: `. O perfil `similaridade` também usa `query: ` e deve
 ser usado dos dois lados de uma comparação simétrica. Os prefixos incluem
 o espaço final e nunca modificam o texto canônico da origem.
@@ -217,8 +217,21 @@ documento usa o texto integral de trabalho da preparação preservada no
 registro contextual, incluindo espaços externos e separadores. O documento
 não é reconstruído a partir de períodos nem de janelas.
 
+Cada parágrafo da segmentação recebe uma representação `tipo: "paragrafo"`
+com `paragrafo_id`, texto exato, hash e intervalos de trabalho e original.
+O parágrafo é vetorizado uma única vez por execução, mesmo quando contém
+vários períodos ou participa de várias janelas. Separadores entre parágrafos
+e espaços externos ficam no documento integral, conforme a segmentação.
+Parágrafos longos usam a mesma divisão em blocos e agregação dos demais tipos.
+O notebook e o pacote Colab incluem automaticamente essas representações,
+e o ZIP de resultados permite importá-las no aplicativo.
+
+Novos resultados usam `schema_version: "1.1.0"`. Resultados antigos `1.0.0`
+continuam válidos e importáveis, com sua cobertura original sem parágrafos;
+é necessário gerar uma nova execução para obter os vetores adicionais.
+
 Conte tokens com truncamento desativado, incluindo prefixo e especiais,
-antes de enviar cada entrada ao mecanismo. O orçamento se aplica aos três
+antes de enviar cada entrada ao mecanismo. O orçamento se aplica aos quatro
 tipos de representação. Para entradas acima do limite, a política divide em
 recortes contíguos de caracteres Unicode, sem sobreposição e sem
 detokenização. Os blocos ordenados reconstituem integralmente o texto.
@@ -256,7 +269,7 @@ Ela verifica a coerência do registro armazenado; sem regeneração não
 comprova que valores arbitrários foram de fato produzidos pelo modelo
 declarado. Integridade e qualidade dos embeddings são verificações distintas.
 
-## Contrato JSON 1.0.0
+## Contrato JSON 1.1.0
 
 O registro concluído tem `etapa: "09_vetorizacao"` e os seguintes campos.
 Campos desconhecidos no registro, representações, blocos ou armazenamento
@@ -267,7 +280,7 @@ são recusados por `validar_vetorizacao()`.
 | Identificação | `schema_version`, `etapa`, `execucao_id`, `contexto_execucao_id`, `documento_id`, `registrado_em`. |
 | Origem | `contexto` contém a execução 08 completa; `contexto_sha256` assina esse JSON; `coordenadas` preserva a convenção da origem. |
 | Geração | `modelo`, `configuracao`, `compatibilidade`, `geracao`, `processamento`. As duas assinaturas contêm `descricao` e `sha256`; a assinatura de geração inclui ambiente efetivo e lote para reutilização conservadora. |
-| Resultados | `representacoes`, `artefatos`, `validacao`. A ordem é foco e janela de cada unidade, seguidos pelo documento integral. |
+| Resultados | `representacoes`, `artefatos`, `validacao`. A ordem é foco e janela de cada unidade, seguidos pelos parágrafos na ordem da segmentação e pelo documento integral. |
 
 Cada representação conserva `id`, `ordem`, `tipo`, `unidade_id`,
 `periodo_foco_id`, `janela_logica_id`, `campo`, `texto`, `sha256_texto`,

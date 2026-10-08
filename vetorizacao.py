@@ -17,8 +17,9 @@ from contratos_vetorizacao import (
 from preparacao import mapear_intervalos
 from unidades_contexto import ErroContexto, validar_unidades_contexto
 
-SCHEMA_VERSION = "1.0.0"
-MODULO_VERSION = "1.0.0"
+SCHEMA_VERSION = "1.1.0"
+SCHEMA_VERSIONS = ("1.0.0", SCHEMA_VERSION)
+MODULO_VERSION = "1.1.0"
 ETAPA = "09_vetorizacao"
 MAX_REPRESENTACOES = 25_000
 MAX_BLOCOS = 50_000
@@ -59,7 +60,7 @@ def _limites():
             "max_caracteres_entradas": MAX_CARACTERES_ENTRADAS}
 
 
-def _alvos(contexto, preparacao, execucao_id):
+def _alvos(contexto, preparacao, execucao_id, *, incluir_paragrafos=True):
     resultado = []
     for unidade in contexto["unidades"]:
         for tipo in ("foco", "janela"):
@@ -70,6 +71,16 @@ def _alvos(contexto, preparacao, execucao_id):
                               "campo": tipo + ".texto", "texto": bloco["texto"],
                               "sha256_texto": bloco["sha256_texto"],
                               "trabalho": deepcopy(bloco["trabalho"]), "original": deepcopy(bloco["original"])})
+    if incluir_paragrafos:
+        segmentacao = contexto["regras"]["analise"]["anotacao"]["segmentacao"]
+        for paragrafo in segmentacao["paragrafos"]:
+            intervalo = paragrafo["trabalho"]
+            texto = preparacao["trabalho"]["texto"][intervalo["inicio"]:intervalo["fim"]]
+            resultado.append({"tipo": "paragrafo", "paragrafo_id": paragrafo["id"],
+                              "unidade_id": None, "periodo_foco_id": None,
+                              "janela_logica_id": None, "campo": "segmentacao.paragrafos.texto",
+                              "texto": texto, "sha256_texto": sha256(texto),
+                              "trabalho": deepcopy(intervalo), "original": deepcopy(paragrafo["original"])})
     resultado.append({"tipo": "documento", "unidade_id": None, "periodo_foco_id": None,
                       "janela_logica_id": None, "campo": "preparacao.trabalho.texto",
                       "texto": preparacao["trabalho"]["texto"], "sha256_texto": preparacao["trabalho"]["sha256"],
@@ -316,7 +327,8 @@ def validar_vetorizacao(registro):
     exigir(type(registro) is dict, "Registro vetorial deve ser objeto JSON.")
     json_estrito(registro)
     campos = {"schema_version", "etapa", "execucao_id", "contexto_execucao_id", "documento_id", "registrado_em", "contexto", "contexto_sha256", "coordenadas", "modelo", "configuracao", "compatibilidade", "geracao", "processamento", "representacoes", "artefatos", "validacao"}
-    exigir(set(registro) == campos and registro["schema_version"] == SCHEMA_VERSION and registro["etapa"] == ETAPA, "Contrato ou versão vetorial não suportado.")
+    exigir(set(registro) == campos and registro["schema_version"] in SCHEMA_VERSIONS and registro["etapa"] == ETAPA, "Contrato ou versão vetorial não suportado.")
+    modulo_version = "1.0.0" if registro["schema_version"] == "1.0.0" else MODULO_VERSION
     contexto = registro["contexto"]
     preparacao = _fonte(contexto)
     identificacao = identificador(registro["execucao_id"], "execucao_id")
@@ -330,11 +342,12 @@ def validar_vetorizacao(registro):
     config = configuracao_vetorizacao({k: informado[k] for k in ("perfil", "max_tokens", "tamanho_lote", "agregar")}, limite_tokens=modelo["limite_tokens"])
     exigir(canonico(config) == canonico(informado), "Configuração ou política adulterada.")
     compatibilidade = perfil_compatibilidade(modelo, config)
-    descricao_geracao = {"compatibilidade": compatibilidade, "ambiente": modelo["ambiente"], "tamanho_lote": config["tamanho_lote"], "modulo_version": MODULO_VERSION}
+    descricao_geracao = {"compatibilidade": compatibilidade, "ambiente": modelo["ambiente"], "tamanho_lote": config["tamanho_lote"], "modulo_version": modulo_version}
     geracao = {"descricao": descricao_geracao, "sha256": hash_json(descricao_geracao)}
     exigir(canonico(registro["compatibilidade"]) == canonico(compatibilidade) and canonico(registro["geracao"]) == canonico(geracao), "Perfis ou assinaturas de geração inconsistentes.")
-    exigir(canonico(registro["processamento"]) == canonico({"modulo": {"nome": "vetorizacao", "versao": MODULO_VERSION}, "limites_recursos": _limites()}), "Versão ou limites de processamento inconsistentes.")
-    alvos = _alvos(contexto, preparacao, identificacao)
+    exigir(canonico(registro["processamento"]) == canonico({"modulo": {"nome": "vetorizacao", "versao": modulo_version}, "limites_recursos": _limites()}), "Versão ou limites de processamento inconsistentes.")
+    alvos = _alvos(contexto, preparacao, identificacao,
+                    incluir_paragrafos=registro["schema_version"] != "1.0.0")
     reps = registro["representacoes"]
     lista_artefatos = registro["artefatos"]
     exigir(type(reps) is list and len(reps) == len(alvos) and type(lista_artefatos) is list, "Cobertura de representações incorreta.")

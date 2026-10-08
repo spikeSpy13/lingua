@@ -48,7 +48,7 @@ sem clonar uma versão mais recente do repositório durante a execução.
 
 O notebook confere a estrutura do ZIP, os caminhos, os tamanhos e os
 hashes antes de importar os módulos. A execução revalida a origem 08 e
-preserva os textos exatos do foco, da janela e do documento integral.
+preserva os textos exatos do foco, da janela, dos parágrafos e do documento integral.
 Ela não repete as inferências linguísticas das etapas 05 e 06.
 
 A preparação resolve uma revisão oficial imutável do E5 e do tokenizador.

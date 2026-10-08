@@ -327,6 +327,11 @@ else:
             record = colab.executar_pacote_colab(destination, gerador=generator)
             report = validar_vetorizacao(record)
             self.assertEqual(record["contexto"], self.context)
+            paragraphs = [r for r in record["representacoes"] if r["tipo"] == "paragrafo"]
+            source = self.context["regras"]["analise"]["anotacao"]["segmentacao"]["paragrafos"]
+            self.assertEqual([r["paragrafo_id"] for r in paragraphs], [p["id"] for p in source])
+            self.assertEqual([r["texto"] for r in paragraphs], [p["texto"] for p in source])
+            self.assertTrue(all(r["vetor"] is not None for r in paragraphs))
             self.assertEqual(record["contexto_execucao_id"], self.context["execucao_id"])
             self.assertEqual(record["modelo"]["natureza"], "simulado_teste")
             self.assertFalse(report["pronto_para_uso"])
@@ -335,6 +340,8 @@ else:
                 self.assertEqual((destination / name).read_bytes(), content)
             exported = colab.exportar_resultado_colab(record)
             self.assertTrue(zipfile.is_zipfile(io.BytesIO(exported)))
+            from importacao_vetores import ler_resultado_zip
+            self.assertEqual(ler_resultado_zip(exported, permitir_simulado=True), record)
             result_files = abrir_pacote(exported)
             records = [json.loads(payload) for name, payload in result_files.items() if name.endswith(".json")]
             self.assertIn(record, records)

@@ -15,6 +15,12 @@ longos e vetores associados à origem exata.
 Os registros JSON contêm versões, hashes SHA-256,
 metadados e posições que apontam até o original.
 
+O botão **Gerar narrativa** abre um gerador progressivo de narrativas ficcionais
+em primeira pessoa, com planejamento e cinco parágrafos editáveis. Cada movimento
+é gerado, validado e aprovado separadamente. A geração usa OpenRouter com a chave
+`NARRATIVA_API_KEY`; edição manual, validação e montagem funcionam localmente.
+Veja [fluxo, configuração da API e exportação](docs/narrativas.md).
+
 ## Obter uma cópia local
 
 Requer Git e Python de 3.10 a 3.14, com `pip`. A dependência spaCy 3.8.16
@@ -181,7 +187,7 @@ a [especificação consolidada](docs/especificacao_etapa08.md) e os exemplos com
 [preservação literal](examples/unidades_contexto_literal.json) e
 [normalização opcional de CRLF](examples/unidades_contexto_normalizada.json).
 
-## Vetorizar foco, janela e documento
+## Vetorizar foco, janela, parágrafos e documento
 
 A etapa 09 é opcional e utiliza inicialmente `intfloat/multilingual-e5-large`.
 CPU é o padrão; CUDA pode ser configurada, sem exigir GPU. As etapas 01 a 08

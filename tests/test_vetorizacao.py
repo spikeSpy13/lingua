@@ -58,8 +58,8 @@ class ContratoVetorizacaoTests(BaseVetorizacao, unittest.TestCase):
         fonte = construir_contexto(pequeno=True)
         registro = self.executar(fonte=fonte)
         self.assertEqual([r["tipo"] for r in registro["representacoes"]],
-                         ["foco", "janela", "documento"])
-        self.assertEqual([r["texto"] for r in registro["representacoes"]], ["O estudo."] * 3)
+                         ["foco", "janela", "paragrafo", "documento"])
+        self.assertEqual([r["texto"] for r in registro["representacoes"]], ["O estudo."] * 4)
         relatorio = v.validar_vetorizacao(registro)
         self.assertEqual(relatorio["estado"], "valido")
         self.assertFalse(relatorio["pronto_para_uso"])
@@ -77,11 +77,11 @@ class ContratoVetorizacaoTests(BaseVetorizacao, unittest.TestCase):
 
     def test_tipos_ordem_e_cobertura_com_documento_unico(self):
         registro = self.executar()
-        self.assertEqual(len(registro["representacoes"]), 11)
-        self.assertEqual([r["ordem"] for r in registro["representacoes"]], list(range(11)))
+        self.assertEqual(len(registro["representacoes"]), 13)
+        self.assertEqual([r["ordem"] for r in registro["representacoes"]], list(range(13)))
         self.assertEqual([r["tipo"] for r in registro["representacoes"]],
-                         ["foco", "janela"] * 5 + ["documento"])
-        self.assertEqual(len({r["id"] for r in registro["representacoes"]}), 11)
+                         ["foco", "janela"] * 5 + ["paragrafo"] * 2 + ["documento"])
+        self.assertEqual(len({r["id"] for r in registro["representacoes"]}), 13)
 
     def test_foco_janela_e_documento_preservam_campos_exatos_e_intervalos(self):
         registro = self.executar()
@@ -102,6 +102,35 @@ class ContratoVetorizacaoTests(BaseVetorizacao, unittest.TestCase):
         self.assertEqual(doc["trabalho"], {"inicio": 0, "fim": len(TEXTO)})
         self.assertIsNone(doc["unidade_id"])
 
+    def test_paragrafos_unicos_preservam_unicode_crlf_e_origem(self):
+        for normalizar in (False, True):
+            fonte = construir_contexto(normalizar=normalizar, atravessar_paragrafos=True)
+            registro = self.executar(fonte=fonte, configuracao={"max_tokens": 8})
+            segmentacao = fonte["regras"]["analise"]["anotacao"]["segmentacao"]
+            paragrafos = [r for r in registro["representacoes"] if r["tipo"] == "paragrafo"]
+            self.assertEqual(len(paragrafos), len(segmentacao["paragrafos"]))
+            self.assertEqual(len({r["paragrafo_id"] for r in paragrafos}), len(paragrafos))
+            for rep, origem in zip(paragrafos, segmentacao["paragrafos"]):
+                self.assertEqual(rep["paragrafo_id"], origem["id"])
+                self.assertEqual(rep["texto"], origem["texto"])
+                self.assertEqual(rep["sha256_texto"], digest(origem["texto"]))
+                self.assertEqual(rep["trabalho"], origem["trabalho"])
+                self.assertEqual(rep["original"], origem["original"])
+                self.assertIsNotNone(rep["vetor"])
+            for campo, valor in (("texto", "adulterado"), ("paragrafo_id", "outro")):
+                alterado = deepcopy(registro)
+                next(r for r in alterado["representacoes"] if r["tipo"] == "paragrafo")[campo] = valor
+                with self.assertRaises(v.ErroVetorizacao):
+                    v.validar_vetorizacao(alterado)
+
+    def test_resultado_arquivado_1_0_continua_valido(self):
+        registro = json.loads((Path(__file__).resolve().parents[1] / "examples" / "vetorizacao_simulada.json").read_text())
+        self.assertEqual(registro["schema_version"], "1.0.0")
+        self.assertEqual(v.validar_vetorizacao(registro)["estado"], "valido")
+        from persistencia_vetores import exportar_zip
+        from importacao_vetores import ler_resultado_zip
+        self.assertEqual(ler_resultado_zip(exportar_zip(registro), permitir_simulado=True), registro)
+
     def test_registro_simulado_identifica_natureza_e_backend(self):
         registro = self.executar()
         self.assertEqual(registro["modelo"]["natureza"], "simulado_teste")
@@ -115,7 +144,7 @@ class ContratoVetorizacaoTests(BaseVetorizacao, unittest.TestCase):
         self.assertEqual(registro["contexto_execucao_id"], self.fonte["execucao_id"])
         self.assertEqual(registro["documento_id"], self.fonte["documento_id"])
         self.assertEqual(registro["contexto_sha256"], digest_json(self.fonte))
-        self.assertEqual(registro["schema_version"], "1.0.0")
+        self.assertEqual(registro["schema_version"], "1.1.0")
         self.assertEqual(registro["etapa"], "09_vetorizacao")
 
     def test_ids_datas_da_execucao_nao_mudam_identidade_de_representacao(self):
@@ -446,7 +475,7 @@ class TextosLongosVetorizacaoTests(BaseVetorizacao, unittest.TestCase):
         gerador = GeradorSimulado()
         registro = self.executar(gerador=gerador, configuracao={"max_tokens": 8, "tamanho_lote": 2})
         self.assertEqual({r["tipo"] for r in registro["representacoes"]
-                          if r["construcao"] == "agregada"}, {"foco", "janela", "documento"})
+                          if r["construcao"] == "agregada"}, {"foco", "janela", "paragrafo", "documento"})
         for lote in gerador.chamadas_geracao:
             self.assertLessEqual(len(lote), 2)
             for entrada in lote:
@@ -527,8 +556,8 @@ class ReutilizacaoCompatibilidadeTests(BaseVetorizacao, unittest.TestCase):
         registro = self.executar(fonte=construir_contexto(pequeno=True), gerador=gerador)
         self.assertEqual(len(gerador.entradas_geradas), 1)
         self.assertEqual(len(registro["artefatos"]), 1)
-        self.assertEqual(len(registro["representacoes"]), 3)
-        self.assertEqual(len({r["representacao_logica_id"] for r in registro["representacoes"]}), 3)
+        self.assertEqual(len(registro["representacoes"]), 4)
+        self.assertEqual(len({r["representacao_logica_id"] for r in registro["representacoes"]}), 4)
 
     def test_cache_entre_execucoes_preserva_associacoes_sem_nova_inferencia(self):
         primeiro = self.executar()

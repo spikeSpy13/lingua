@@ -439,3 +439,23 @@ button:hover { background: #1e483d; }
   .occurrence-summary { grid-template-columns: 1fr; gap: 3px; }
   .occurrence-summary dd { margin-bottom: 7px; }
 }
+
+.narrative-open { margin-left: auto; padding: 10px 16px; border: 1px solid var(--line); border-radius: 8px; text-decoration: none; font-weight: 650; white-space: nowrap; }
+.narrative-nav { margin-left: auto; display: flex; flex-wrap: wrap; gap: 16px; }
+.narrative-nav a[aria-current="page"] { font-weight: 700; text-decoration-thickness: 2px; }
+.narrative-field, .narrative-settings { margin-bottom: 24px; }
+.narrative-field label { margin-top: 18px; }
+.narrative-field details { margin-top: 12px; }
+.narrative-source { padding: 14px; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; background: #f7f8f4; border-radius: 8px; }
+.narrative-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; margin-top: 18px; }
+.narrative-actions button { white-space: normal; }
+.narrative-status { font-weight: 650; }
+.narrative-validation { padding: 12px 16px; background: #f3f8f2; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 16px; }
+.narrative-validation p { margin: 6px 0; }
+.narrative-validation li { margin: 6px 0; }
+.narrative-settings select { display: block; width: 100%; padding: 9px 12px; margin-top: 6px; border: 1px solid var(--line); border-radius: 7px; color: var(--ink); background: #fdfefb; font: inherit; }
+.narrative-history { margin-top: 24px; }
+.narrative-history li { margin-top: 12px; }
+.narrative-history time { display: block; font-size: 12px; color: var(--muted); }
+.narrative-field .technical-option { align-items: flex-start; }
+form[aria-busy="true"] button { opacity: .65; cursor: wait; }

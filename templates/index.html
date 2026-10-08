@@ -15,6 +15,7 @@
           <span>Análise linguística</span>
         </a>
         <span class="stage">Textos, regras, contexto e vetores</span>
+        <a class="narrative-open" href="{{ url_for('narrativas.inicio') }}">Gerar narrativa <span aria-hidden="true">→</span></a>
       </header>
 
       <main>
@@ -741,7 +742,7 @@
           {% if workflow_tabs[7].available %}
           <div class="editor-heading">
             <h2 id="embedding-title">Vetorização</h2>
-            <p>Gere representações do foco, da janela e do documento completo a partir desta execução contextual.</p>
+            <p>Gere representações do foco, da janela, de cada parágrafo e do documento completo a partir desta execução contextual.</p>
           </div>
           <form method="post" action="{{ url_for('vectorize_submission', record_id=record.id) }}">
             <input type="hidden" name="contexto_execucao_id" value="{{ contextualized.execucao_id }}">
@@ -814,7 +815,7 @@
             </details>
             {% for representation in vectorized.representacoes %}
             <article class="embedding-representation">
-              <h3>{{ {'foco':'Foco', 'janela':'Janela', 'documento':'Documento'}.get(representation.tipo, representation.tipo) }}{% if representation.periodo_foco_id %} · período de origem{% endif %}</h3>
+              <h3>{{ {'foco':'Foco', 'janela':'Janela', 'paragrafo':'Parágrafo', 'documento':'Documento'}.get(representation.tipo, representation.tipo) }}{% if representation.periodo_foco_id %} · período de origem{% endif %}</h3>
               <p class="period-text">{{ representation.texto }}</p>
               <p class="context-neighbor-count">{{ {'direta':'Representação direta', 'agregada':'Representação agregada', 'blocos':'Vetores individuais de blocos', 'sem_conteudo':'Sem conteúdo para gerar vetor'}.get(representation.construcao, representation.construcao) }} · {{ representation.blocos|length }} bloco(s).</p>
               <details class="embedding-provenance">
