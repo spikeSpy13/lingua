@@ -54,6 +54,14 @@ clique em **Registrar texto**. A confirmação mostra o identificador do registr
 e a data em horário de Brasília. Atualizar a confirmação não repete o envio.
 Mantenha o terminal aberto durante o uso e pressione `Ctrl+C` para encerrar.
 
+A interface organiza o fluxo em oito abas: **Texto**, **Preparação**,
+**Segmentação**, **Morfologia**, **Sintaxe e entidades**, **Regras**,
+**Contexto** e **Vetorização**. Cada aba mostra somente as ações e os resultados
+daquela parte do fluxo. Use **Anterior** e **Continuar** para navegar; esses
+botões não executam o processamento. As próximas abas ficam disponíveis conforme
+as etapas anteriores são concluídas e validadas. Ao consultar uma execução do
+histórico, a navegação mantém as referências daquela execução.
+
 ## Preparar o registro para análise
 
 Por padrão, o texto de trabalho é idêntico ao original. A opção técnica de

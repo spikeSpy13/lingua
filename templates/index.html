@@ -3,8 +3,9 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Contexto e vetorização · Análise linguística</title>
+    <title>Etapas · Análise linguística</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="{{ url_for('static', filename='etapas.js') }}" defer></script>
   </head>
   <body>
     <div class="page">
@@ -18,10 +19,27 @@
 
       <main>
         <div class="intro">
-          <p class="eyebrow">Seu ponto de partida</p>
-          <h1>Prepare seu texto para análise.</h1>
-          <p class="intro-description">Registre seu texto, separe suas unidades e consulte sugestões de morfologia, sintaxe, entidades e regras linguísticas, preservando o conteúdo original.</p>
+          <p class="eyebrow">Uma etapa de cada vez</p>
+          <h1>Seu texto, passo a passo.</h1>
+          <p class="intro-description">Comece pelo texto e avance pelas abas. Cada etapa reúne suas ações, resultados e arquivos para download.</p>
         </div>
+
+        {% macro workflow_navigation(stage_index) %}
+        <nav class="workflow-actions" aria-label="Navegação entre etapas">
+          {% if stage_index > 0 and workflow_tabs[stage_index - 1].available %}
+          <a class="workflow-previous" href="{{ workflow_tabs[stage_index - 1].href }}" data-workflow-step="{{ workflow_tabs[stage_index - 1].id }}"><span aria-hidden="true">←</span> Anterior</a>
+          {% else %}
+          <span></span>
+          {% endif %}
+          {% if stage_index < workflow_tabs|length - 1 %}
+          {% if workflow_tabs[stage_index + 1].available %}
+          <a class="workflow-next" href="{{ workflow_tabs[stage_index + 1].href }}" data-workflow-step="{{ workflow_tabs[stage_index + 1].id }}">Continuar: {{ workflow_tabs[stage_index + 1].label }} <span aria-hidden="true">→</span></a>
+          {% else %}
+          <div class="workflow-waiting"><span class="workflow-next" aria-disabled="true">Continuar <span aria-hidden="true">→</span></span><p>Conclua esta etapa para continuar.</p></div>
+          {% endif %}
+          {% endif %}
+        </nav>
+        {% endmacro %}
 
         {% if record %}
         <section class="notice notice-success" role="status" aria-live="polite">
@@ -32,8 +50,58 @@
           </div>
           <a class="new-text" href="{{ url_for('index') }}">Novo texto <span aria-hidden="true">→</span></a>
         </section>
+        {% endif %}
 
-        <section class="editor preparation-panel" aria-labelledby="preparation-title">
+        <div class="workflow" data-workflow>
+          {% if workflow_notice|default(none) %}
+          <p class="notice workflow-notice" role="status">{{ workflow_notice }}</p>
+          {% endif %}
+          <nav class="workflow-tabs" role="tablist" aria-label="Etapas do processamento">
+            {% for tab in workflow_tabs %}
+            <a class="workflow-tab" id="tab-{{ tab.id }}" role="tab" aria-controls="panel-{{ tab.id }}" aria-selected="{{ 'true' if active_tab == tab.id else 'false' }}" tabindex="{{ '0' if active_tab == tab.id else '-1' }}" data-workflow-tab-id="{{ tab.id }}" data-workflow-label="{{ tab.label }}" data-workflow-number="{{ loop.index }}"{% if tab.available %} href="{{ tab.href }}"{% else %} aria-disabled="true"{% endif %}>
+              <span class="workflow-tab-number" aria-hidden="true">{% if tab.done %}✓{% else %}{{ loop.index }}{% endif %}</span>
+              <span class="workflow-tab-copy"><span class="workflow-tab-label">{{ tab.label }}</span><span class="workflow-tab-state">{% if tab.done %}Concluída{% elif tab.available %}Disponível{% else %}Aguardando{% endif %}</span></span>
+            </a>
+            {% endfor %}
+          </nav>
+          <p class="workflow-progress" data-workflow-progress aria-live="polite">{% for tab in workflow_tabs %}{% if active_tab == tab.id %}Passo {{ loop.index }} de {{ workflow_tabs|length }} · {{ tab.label }}{% endif %}{% endfor %}</p>
+
+          <section class="editor workflow-panel text-panel" id="panel-texto" role="tabpanel" aria-labelledby="tab-texto" data-workflow-panel="texto" tabindex="0"{% if active_tab != 'texto' %} hidden{% endif %}>
+          <div class="editor-heading">
+            <h2 id="editor-title">{% if record %}Texto original{% else %}Conteúdo do texto{% endif %}</h2>
+            <p>{% if record %}Consulte o texto registrado e avance para a preparação.{% else %}Cole ou escreva seu texto para começar.{% endif %}</p>
+          </div>
+          {% if error %}
+          <p class="notice notice-error" id="form-error" role="alert">{{ error }}</p>
+          {% endif %}
+          {% if record %}
+          <label for="content">Seu texto registrado</label>
+          <textarea id="content" rows="12" readonly aria-describedby="content-help">
+{{ content }}</textarea>
+          <p id="content-help" class="option-help">O original permanece preservado. Para analisar outro texto, use “Novo texto”.</p>
+          {% else %}
+          <form method="post" action="{{ url_for('submit_text') }}" accept-charset="UTF-8">
+            <label for="content">Seu texto</label>
+            <textarea id="content" name="content" rows="12" placeholder="Escreva aqui ou cole seu texto…" required aria-describedby="content-help{% if error %} form-error{% endif %}"{% if error %} aria-invalid="true"{% endif %}>
+{{ content }}</textarea>
+            <details class="technical-settings">
+              <summary>Preparação técnica opcional</summary>
+              <label class="technical-option">
+                <input type="checkbox" name="normalizar_crlf">
+                Converter CRLF em LF somente no texto de trabalho
+              </label>
+              <p class="option-help">O original é preservado. Por padrão, o texto de trabalho é idêntico ao original.</p>
+            </details>
+            <div class="form-footer">
+              <p id="content-help">Você pode manter parágrafos, espaços e pontuação.</p>
+              <button type="submit">Registrar texto <span aria-hidden="true">→</span></button>
+            </div>
+          </form>
+          {% endif %}
+            {{ workflow_navigation(0) }}
+          </section>
+          <section class="editor workflow-panel preparation-panel" id="panel-preparacao" role="tabpanel" aria-labelledby="tab-preparacao" data-workflow-panel="preparacao" tabindex="0"{% if active_tab != 'preparacao' %} hidden{% endif %}>
+          {% if workflow_tabs[1].available %}
           <div class="editor-heading">
             <h2 id="preparation-title">Preparação para análise</h2>
             {% if prepared %}
@@ -57,17 +125,21 @@
             <ul>
               {% for history in preparation_history %}
               <li>
-                <a href="{{ url_for('submission', record_id=record.id, preparacao_id=history.preparacao_id) }}"{% if prepared and history.preparacao_id == prepared.preparacao_id %} aria-current="page"{% endif %}>Preparação #{{ history.id }}</a>
+                <a href="{{ url_for('submission', aba='preparacao', record_id=record.id, preparacao_id=history.preparacao_id) }}"{% if prepared and history.preparacao_id == prepared.preparacao_id %} aria-current="page"{% endif %}>Preparação #{{ history.id }}</a>
                 {% if prepared and history.preparacao_id == prepared.preparacao_id %}<span class="current-preparation">Em exibição</span>{% endif %}
               </li>
               {% endfor %}
             </ul>
           </details>
           {% endif %}
-        </section>
+          {% else %}
+            <div class="editor-heading"><h2>Preparação para análise</h2><p>Registre seu texto na primeira aba para preparar a análise.</p></div>
+          {% endif %}
+            {{ workflow_navigation(1) }}
+          </section>
 
-        {% if prepared %}
-        <section class="editor segmentation-panel" aria-labelledby="segmentation-title">
+          <section class="editor workflow-panel segmentation-panel" id="panel-segmentacao" role="tabpanel" aria-labelledby="tab-segmentacao" data-workflow-panel="segmentacao" tabindex="0"{% if active_tab != 'segmentacao' %} hidden{% endif %}>
+          {% if workflow_tabs[2].available %}
           <div class="editor-heading">
             <h2 id="segmentation-title">Tokenização e segmentação</h2>
             <p>Separe o texto de trabalho em unidades. Cada execução gera um novo registro e preserva o original.</p>
@@ -121,7 +193,7 @@
             <ul>
               {% for history in segmentation_history %}
               <li>
-                <a href="{{ url_for('submission', record_id=record.id, preparacao_id=prepared.preparacao_id, segmentacao_id=history.segmentacao_id) }}"{% if segmented and history.segmentacao_id == segmented.segmentacao_id %} aria-current="page"{% endif %}>Segmentação {{ loop.index }}</a>
+                <a href="{{ url_for('submission', aba='segmentacao', record_id=record.id, preparacao_id=prepared.preparacao_id, segmentacao_id=history.segmentacao_id) }}"{% if segmented and history.segmentacao_id == segmented.segmentacao_id %} aria-current="page"{% endif %}>Segmentação {{ loop.index }}</a>
                 <time datetime="{{ history.registrado_em }}">{{ history.registrado_em|horario_brasilia }} (horário de Brasília)</time>
                 {% if segmented and history.segmentacao_id == segmented.segmentacao_id %}<span class="current-segmentation">Em exibição</span>{% endif %}
               </li>
@@ -129,10 +201,14 @@
             </ul>
           </details>
           {% endif %}
-        </section>
+          {% else %}
+            <div class="editor-heading"><h2>Tokenização e segmentação</h2><p>Gere uma preparação do texto para separar suas unidades.</p></div>
+          {% endif %}
+            {{ workflow_navigation(2) }}
+          </section>
 
-        {% if segmented %}
-        <section class="editor annotation-panel" aria-labelledby="annotation-title">
+          <section class="editor workflow-panel annotation-panel" id="panel-morfologia" role="tabpanel" aria-labelledby="tab-morfologia" data-workflow-panel="morfologia" tabindex="0"{% if active_tab != 'morfologia' %} hidden{% endif %}>
+          {% if workflow_tabs[3].available %}
           <div class="editor-heading">
             <h2 id="annotation-title">Morfologia e vocabulário</h2>
             <p>Gere sugestões de lema, classe gramatical e atributos para os tokens desta segmentação.</p>
@@ -253,7 +329,7 @@
             <ul>
               {% for history in annotation_history %}
               <li>
-                <a href="{{ url_for('submission', record_id=record.id, preparacao_id=prepared.preparacao_id, segmentacao_id=segmented.segmentacao_id, anotacao_id=history.anotacao_id) }}"{% if annotated and history.anotacao_id == annotated.anotacao_id %} aria-current="page"{% endif %}>Anotação #{{ history.id }}</a>
+                <a href="{{ url_for('submission', aba='morfologia', record_id=record.id, preparacao_id=prepared.preparacao_id, segmentacao_id=segmented.segmentacao_id, anotacao_id=history.anotacao_id) }}"{% if annotated and history.anotacao_id == annotated.anotacao_id %} aria-current="page"{% endif %}>Anotação #{{ history.id }}</a>
                 <time datetime="{{ history.registrado_em }}">{{ history.registrado_em|horario_brasilia }} (horário de Brasília)</time>
                 {% if annotated and history.anotacao_id == annotated.anotacao_id %}<span class="current-annotation">Em exibição</span>{% endif %}
               </li>
@@ -261,10 +337,14 @@
             </ul>
           </details>
           {% endif %}
-        </section>
+          {% else %}
+            <div class="editor-heading"><h2>Morfologia e vocabulário</h2><p>Conclua a segmentação para anotar os tokens e o vocabulário.</p></div>
+          {% endif %}
+            {{ workflow_navigation(3) }}
+          </section>
 
-        {% if annotated %}
-        <section class="editor syntax-panel" aria-labelledby="syntax-title">
+          <section class="editor workflow-panel syntax-panel" id="panel-sintaxe" role="tabpanel" aria-labelledby="tab-sintaxe" data-workflow-panel="sintaxe" tabindex="0"{% if active_tab != 'sintaxe' %} hidden{% endif %}>
+          {% if workflow_tabs[4].available %}
           <div class="editor-heading">
             <h2 id="syntax-title">Sintaxe e entidades</h2>
             <p>Analise as relações entre os tokens e encontre entidades nesta anotação, mantendo os períodos e as posições registrados.</p>
@@ -421,7 +501,7 @@
             <ul>
               {% for history in analysis_history %}
               <li>
-                <a href="{{ url_for('submission', record_id=record.id, preparacao_id=prepared.preparacao_id, segmentacao_id=segmented.segmentacao_id, anotacao_id=annotated.anotacao_id, analise_id=history.analise_id) }}"{% if analyzed|default(none) and history.analise_id == analyzed.analise_id %} aria-current="page"{% endif %}>Análise #{{ history.id }}</a>
+                <a href="{{ url_for('submission', aba='sintaxe', record_id=record.id, preparacao_id=prepared.preparacao_id, segmentacao_id=segmented.segmentacao_id, anotacao_id=annotated.anotacao_id, analise_id=history.analise_id) }}"{% if analyzed|default(none) and history.analise_id == analyzed.analise_id %} aria-current="page"{% endif %}>Análise #{{ history.id }}</a>
                 <time datetime="{{ history.registrado_em }}">{{ history.registrado_em|horario_brasilia }} (horário de Brasília)</time>
                 {% if analyzed|default(none) and history.analise_id == analyzed.analise_id %}<span class="current-analysis">Em exibição</span>{% endif %}
               </li>
@@ -429,9 +509,14 @@
             </ul>
           </details>
           {% endif %}
-        </section>
-        {% if analyzed|default(none) %}
-        <section class="editor rules-panel" aria-labelledby="rules-title">
+          {% else %}
+            <div class="editor-heading"><h2>Sintaxe e entidades</h2><p>Conclua a anotação de morfologia para analisar a sintaxe e as entidades.</p></div>
+          {% endif %}
+            {{ workflow_navigation(4) }}
+          </section>
+
+          <section class="editor workflow-panel rules-panel" id="panel-regras" role="tabpanel" aria-labelledby="tab-regras" data-workflow-panel="regras" tabindex="0"{% if active_tab != 'regras' %} hidden{% endif %}>
+          {% if workflow_tabs[5].available %}
           <div class="editor-heading">
             <h2 id="rules-title">Regras linguísticas</h2>
             <p>Identifique construções a partir desta análise. Cada execução preserva as anotações recebidas e o catálogo utilizado.</p>
@@ -452,7 +537,7 @@
             {% if ruled.validacao.pronto_para_etapa_08 %}
             <p class="rule-readiness" role="status">Registro validado e pronto para a etapa 08.</p>
             {% else %}
-            <p class="notice notice-error" role="status">Execução salva com diagnóstico incompleto. Ainda não está pronta para a etapa 08. Consulte o estado das regras abaixo.</p>
+            <p class="notice notice-error" role="status">Execução salva com diagnóstico incompleto. Conclua as regras desta execução antes de construir unidades de contexto. Consulte o estado das regras abaixo.</p>
             {% endif %}
             <a class="download-link" href="{{ url_for('rules_json', record_id=record.id, execucao_id=ruled.execucao_id) }}">Baixar regras JSON <span aria-hidden="true">↓</span></a>
 
@@ -546,7 +631,7 @@
             <ul>
               {% for history in rule_history %}
               <li>
-                <a href="{{ url_for('submission', record_id=record.id, execucao_id=history.execucao_id) }}"{% if ruled|default(none) and history.execucao_id == ruled.execucao_id %} aria-current="page"{% endif %}>Execução #{{ history.id }}</a>
+                <a href="{{ url_for('submission', aba='regras', record_id=record.id, execucao_id=history.execucao_id) }}"{% if ruled|default(none) and history.execucao_id == ruled.execucao_id %} aria-current="page"{% endif %}>Execução #{{ history.id }}</a>
                 <time datetime="{{ history.registrado_em }}">{{ history.registrado_em|horario_brasilia }} (horário de Brasília)</time>
                 {% if ruled|default(none) and history.execucao_id == ruled.execucao_id %}<span class="current-analysis">Em exibição</span>{% endif %}
               </li>
@@ -554,9 +639,14 @@
             </ul>
           </details>
           {% endif %}
-        </section>
-        {% if ruled|default(none) %}
-        <section class="editor context-panel" aria-labelledby="context-title">
+          {% else %}
+            <div class="editor-heading"><h2>Regras linguísticas</h2><p>Conclua a análise sintática para aplicar as regras linguísticas.</p></div>
+          {% endif %}
+            {{ workflow_navigation(5) }}
+          </section>
+
+          <section class="editor workflow-panel context-panel" id="panel-contexto" role="tabpanel" aria-labelledby="tab-contexto" data-workflow-panel="contexto" tabindex="0"{% if active_tab != 'contexto' %} hidden{% endif %}>
+          {% if workflow_tabs[6].available %}
           <div class="editor-heading">
             <h2 id="context-title">Unidades de contexto</h2>
             <p>Organize cada período com seus vizinhos e as anotações salvas, mantendo acesso ao parágrafo e ao documento completo.</p>
@@ -637,13 +727,18 @@
           <details class="context-history">
             <summary>Execuções de contexto salvas ({{ context_history|length }})</summary>
             <ul>{% for history in context_history %}
-              <li><a href="{{ url_for('submission', record_id=record.id, contexto_execucao_id=history.contexto_execucao_id) }}"{% if contextualized and history.contexto_execucao_id == contextualized.execucao_id %} aria-current="page"{% endif %}>Contexto #{{ history.id }}</a> <time datetime="{{ history.registrado_em }}">{{ history.registrado_em|horario_brasilia }} (horário de Brasília)</time>{% if contextualized and history.contexto_execucao_id == contextualized.execucao_id %} <span class="current-analysis">Em exibição</span>{% endif %}</li>
+              <li><a href="{{ url_for('submission', aba='contexto', record_id=record.id, contexto_execucao_id=history.contexto_execucao_id) }}"{% if contextualized and history.contexto_execucao_id == contextualized.execucao_id %} aria-current="page"{% endif %}>Contexto #{{ history.id }}</a> <time datetime="{{ history.registrado_em }}">{{ history.registrado_em|horario_brasilia }} (horário de Brasília)</time>{% if contextualized and history.contexto_execucao_id == contextualized.execucao_id %} <span class="current-analysis">Em exibição</span>{% endif %}</li>
             {% endfor %}</ul>
           </details>
           {% endif %}
-        </section>
-        {% if contextualized|default(none) %}
-        <section class="editor embedding-panel" aria-labelledby="embedding-title">
+          {% else %}
+            <div class="editor-heading"><h2>Unidades de contexto</h2><p>Conclua e valide as regras linguísticas para construir o contexto.</p></div>
+          {% endif %}
+            {{ workflow_navigation(6) }}
+          </section>
+
+          <section class="editor workflow-panel embedding-panel" id="panel-vetorizacao" role="tabpanel" aria-labelledby="tab-vetorizacao" data-workflow-panel="vetorizacao" tabindex="0"{% if active_tab != 'vetorizacao' %} hidden{% endif %}>
+          {% if workflow_tabs[7].available %}
           <div class="editor-heading">
             <h2 id="embedding-title">Vetorização</h2>
             <p>Gere representações do foco, da janela e do documento completo a partir desta execução contextual.</p>
@@ -730,52 +825,21 @@
           <details class="embedding-history">
             <summary>Execuções de vetorização salvas ({{ embedding_history|length }})</summary>
             <ul>{% for history in embedding_history %}<li>
-              <a href="{{ url_for('submission', record_id=record.id, vetorizacao_execucao_id=history.vetorizacao_execucao_id) }}"{% if vectorized and history.vetorizacao_execucao_id == vectorized.execucao_id %} aria-current="page"{% endif %}>Vetorização #{{ history.id }}</a>
+              <a href="{{ url_for('submission', aba='vetorizacao', record_id=record.id, vetorizacao_execucao_id=history.vetorizacao_execucao_id) }}"{% if vectorized and history.vetorizacao_execucao_id == vectorized.execucao_id %} aria-current="page"{% endif %}>Vetorização #{{ history.id }}</a>
               <time datetime="{{ history.registrado_em }}">{{ history.registrado_em|horario_brasilia }} (horário de Brasília)</time>
               <span>{% if history.estado == 'falhou' %}Falhou{% else %}Concluída{% endif %}</span>
             </li>{% endfor %}</ul>
           </details>
           {% endif %}
-        </section>
-        {% endif %}
-        {% endif %}
-        {% endif %}
-        {% endif %}
-        {% endif %}
-        {% endif %}
-        {% endif %}
-
-        <section class="editor" aria-labelledby="editor-title">
-          <div class="editor-heading">
-            <h2 id="editor-title">Conteúdo do texto</h2>
-            <p>O conteúdo será guardado como foi enviado.</p>
-          </div>
-
-          {% if error %}
-          <p class="notice notice-error" id="form-error" role="alert">{{ error }}</p>
+          {% else %}
+            <div class="editor-heading"><h2>Vetorização</h2><p>Construa unidades de contexto validadas para gerar ou exportar os vetores.</p></div>
           {% endif %}
-
-          <form method="post" action="{{ url_for('submit_text') }}" accept-charset="UTF-8">
-            <label for="content">Seu texto</label>
-            <textarea id="content" name="content" rows="12" placeholder="Escreva aqui ou cole seu texto…" required aria-describedby="content-help{% if error %} form-error{% endif %}"{% if error %} aria-invalid="true"{% endif %}>
-{{ content }}</textarea>
-            <details class="technical-settings">
-              <summary>Preparação técnica opcional</summary>
-              <label class="technical-option">
-                <input type="checkbox" name="normalizar_crlf">
-                Converter CRLF em LF somente no texto de trabalho
-              </label>
-              <p class="option-help">O original é preservado. Por padrão, o texto de trabalho é idêntico ao original.</p>
-            </details>
-            <div class="form-footer">
-              <p id="content-help">Você pode manter parágrafos, espaços e pontuação.</p>
-              <button type="submit">Registrar texto <span aria-hidden="true">→</span></button>
-            </div>
-          </form>
-        </section>
+            {{ workflow_navigation(7) }}
+          </section>
+        </div>
       </main>
 
-      <footer class="site-footer">Um espaço para organizar o começo da sua análise.</footer>
+      <footer class="site-footer">Um espaço para organizar sua análise, etapa por etapa.</footer>
     </div>
   </body>
 </html>

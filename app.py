@@ -402,6 +402,84 @@ def context_origin_snapshot(connection, document_id, contextualized):
     return snapshot
 
 
+WORKFLOW_STEPS = (
+    ("texto", "Texto"),
+    ("preparacao", "Preparação"),
+    ("segmentacao", "Segmentação"),
+    ("morfologia", "Morfologia"),
+    ("sintaxe", "Sintaxe e entidades"),
+    ("regras", "Regras"),
+    ("contexto", "Contexto"),
+    ("vetorizacao", "Vetorização"),
+)
+
+
+def requested_workflow_tab():
+    """Aceita uma única aba conhecida, sem interferir nos seletores de origem."""
+    values = request.args.getlist("aba")
+    if not values:
+        return None
+    if len(values) != 1 or values[0] not in {identifier for identifier, _ in WORKFLOW_STEPS}:
+        raise ValueError("Selecione uma única aba válida do processamento.")
+    return values[0]
+
+
+def workflow_context(
+    *, record=None, prepared=None, segmented=None, annotated=None,
+    analyzed=None, ruled=None, contextualized=None, vectorized=None,
+    requested_tab=None,
+):
+    """Descreve a navegação da cadeia selecionada sem executar processamento."""
+    rules_ready = bool(ruled and ruled["validacao"]["pronto_para_etapa_08"])
+    context_ready = bool(contextualized and contextualized["validacao"]["pronto_para_etapa_09"])
+    available = {
+        "texto": True, "preparacao": record is not None,
+        "segmentacao": prepared is not None, "morfologia": segmented is not None,
+        "sintaxe": annotated is not None, "regras": analyzed is not None,
+        "contexto": rules_ready, "vetorizacao": context_ready,
+    }
+    done = {
+        "texto": record is not None, "preparacao": prepared is not None,
+        "segmentacao": segmented is not None, "morfologia": annotated is not None,
+        "sintaxe": analyzed is not None, "regras": rules_ready,
+        "contexto": context_ready,
+        "vetorizacao": bool(vectorized and vectorized.get("estado") != "falhou"),
+    }
+    results = {
+        "texto": record, "preparacao": prepared, "segmentacao": segmented,
+        "morfologia": annotated, "sintaxe": analyzed, "regras": ruled,
+        "contexto": contextualized, "vetorizacao": vectorized,
+    }
+    selectors = (
+        ("vetorizacao_execucao_id", "vetorizacao"), ("contexto_execucao_id", "contexto"),
+        ("execucao_id", "regras"), ("analise_id", "sintaxe"),
+        ("anotacao_id", "morfologia"), ("segmentacao_id", "segmentacao"),
+        ("preparacao_id", "preparacao"),
+    )
+    default_tab = next(
+        (identifier for field, identifier in selectors if field in request.args and available[identifier]),
+        next(
+            (identifier for identifier, _ in reversed(WORKFLOW_STEPS)
+             if results[identifier] is not None and available[identifier]),
+            "texto",
+        ),
+    )
+    active_tab = requested_tab if requested_tab and available[requested_tab] else default_tab
+    arguments = {field: request.args.getlist(field) for field, _ in selectors if field in request.args}
+    tabs = []
+    for identifier, label in WORKFLOW_STEPS:
+        href = None
+        if available[identifier]:
+            endpoint = "submission" if record is not None else "index"
+            endpoint_arguments = {"record_id": record["id"]} if record is not None else {}
+            href = url_for(endpoint, **endpoint_arguments, **arguments, aba=identifier)
+        tabs.append({"id": identifier, "label": label, "available": available[identifier], "done": done[identifier], "href": href})
+    return {
+        "workflow_tabs": tabs, "active_tab": active_tab,
+        "workflow_notice": "Conclua a etapa anterior para abrir essa aba." if requested_tab and not available[requested_tab] else None,
+    }
+
+
 def create_app(config=None):
     app = Flask(__name__)
     app.config.from_mapping(
@@ -516,7 +594,14 @@ def create_app(config=None):
 
     @app.get("/")
     def index():
-        return render_template("index.html", content="", error=None, record=None)
+        try:
+            requested_tab = requested_workflow_tab()
+        except ValueError as error:
+            return {"erro": str(error)}, 400
+        return render_template(
+            "index.html", content="", error=None, record=None,
+            **workflow_context(requested_tab=requested_tab),
+        )
 
     @app.post("/envios")
     def submit_text():
@@ -525,6 +610,7 @@ def create_app(config=None):
             return render_template(
                 "index.html", content=content,
                 error="Digite um texto antes de registrar.", record=None,
+                **workflow_context(),
             ), 400
 
         created_at = datetime.now(timezone.utc).isoformat()
@@ -543,11 +629,15 @@ def create_app(config=None):
                 )
                 connection.commit()
         except ErroPreparacao as error:
-            return render_template("index.html", content=content, error=str(error), record=None), 400
+            return render_template("index.html", content=content, error=str(error), record=None, **workflow_context()), 400
         return redirect(url_for("submission", record_id=record_id), code=303)
 
     @app.get("/envios/<int:record_id>")
     def submission(record_id):
+        try:
+            requested_tab = requested_workflow_tab()
+        except ValueError as error:
+            return {"erro": str(error)}, 400
         with closing(connect_database(app.config["DATABASE"])) as connection:
             row = connection.execute(
                 "SELECT id, content, created_at FROM submissions WHERE id = ?",
@@ -701,6 +791,11 @@ def create_app(config=None):
             ruled=ruled, rule_history=[dict(item) for item in rule_history],
             contextualized=contextualized, context_history=[dict(item) for item in context_history],
             vectorized=vectorized, embedding_history=[dict(item) for item in embedding_history],
+            **workflow_context(
+                record=record, prepared=prepared, segmented=segmented, annotated=annotated,
+                analyzed=analyzed, ruled=ruled, contextualized=contextualized,
+                vectorized=vectorized, requested_tab=requested_tab,
+            ),
         )
 
     @app.post("/envios/<int:record_id>/preparacoes")
@@ -729,7 +824,7 @@ def create_app(config=None):
             return {"erro": "Esse identificador de preparação já existe. Crie uma nova preparação."}, 409
         if request.is_json:
             return Response(json.dumps(prepared, ensure_ascii=False, allow_nan=False), status=201, mimetype="application/json")
-        return redirect(url_for("submission", record_id=record_id), code=303)
+        return redirect(url_for("submission", record_id=record_id, preparacao_id=prepared["preparacao_id"], aba="preparacao"), code=303)
 
     @app.get("/envios/<int:record_id>/preparacao.json")
     def preparation_json(record_id):
@@ -785,7 +880,7 @@ def create_app(config=None):
         if request.is_json:
             return Response(json.dumps(segmented, ensure_ascii=False, allow_nan=False), status=201, mimetype="application/json")
         return redirect(
-            url_for("submission", record_id=record_id, preparacao_id=prepared["preparacao_id"], segmentacao_id=segmented["segmentacao_id"]),
+            url_for("submission", record_id=record_id, preparacao_id=prepared["preparacao_id"], segmentacao_id=segmented["segmentacao_id"], aba="segmentacao"),
             code=303,
         )
 
@@ -850,6 +945,7 @@ def create_app(config=None):
             url_for(
                 "submission", record_id=record_id, preparacao_id=annotated["preparacao_id"],
                 segmentacao_id=annotated["segmentacao_id"], anotacao_id=annotated["anotacao_id"],
+                aba="morfologia",
             ),
             code=303,
         )
@@ -915,7 +1011,7 @@ def create_app(config=None):
             url_for(
                 "submission", record_id=record_id, preparacao_id=analyzed["preparacao_id"],
                 segmentacao_id=analyzed["segmentacao_id"], anotacao_id=analyzed["anotacao_id"],
-                analise_id=analyzed["analise_id"],
+                analise_id=analyzed["analise_id"], aba="sintaxe",
             ),
             code=303,
         )
@@ -978,7 +1074,7 @@ def create_app(config=None):
             url_for(
                 "submission", record_id=record_id, preparacao_id=ruled["preparacao_id"],
                 segmentacao_id=ruled["segmentacao_id"], anotacao_id=ruled["anotacao_id"],
-                analise_id=ruled["analise_id"], execucao_id=ruled["execucao_id"],
+                analise_id=ruled["analise_id"], execucao_id=ruled["execucao_id"], aba="regras",
             ),
             code=303,
         )
@@ -1057,7 +1153,7 @@ def create_app(config=None):
         if request.is_json:
             return Response(json.dumps(contextualized, ensure_ascii=False, allow_nan=False), status=201, mimetype="application/json")
         return redirect(
-            url_for("submission", record_id=record_id, contexto_execucao_id=contextualized["execucao_id"]), code=303,
+            url_for("submission", record_id=record_id, contexto_execucao_id=contextualized["execucao_id"], aba="contexto"), code=303,
         )
 
     @app.get("/envios/<int:record_id>/contexto.json")
@@ -1284,7 +1380,7 @@ def create_app(config=None):
             return {"erro": "Esse identificador de vetorização já existe. Gere uma nova execução."}, 409
         if request.is_json:
             return Response(json.dumps(vectorized, ensure_ascii=False, allow_nan=False), status=failure_status or 201, mimetype="application/json")
-        return redirect(url_for("submission", record_id=record_id, vetorizacao_execucao_id=vectorized["execucao_id"]), code=303)
+        return redirect(url_for("submission", record_id=record_id, vetorizacao_execucao_id=vectorized["execucao_id"], aba="vetorizacao"), code=303)
 
     def load_requested_embedding(record_id, *, representation=False):
         fields = {"vetorizacao_execucao_id", "representacao_id"} if representation else {"vetorizacao_execucao_id"}
@@ -1363,6 +1459,7 @@ def create_app(config=None):
         return render_template(
             "index.html", content="", record=None,
             error="O envio excedeu o limite de 2 MB. Envie um texto menor.",
+            **workflow_context(),
         ), 413
 
     return app

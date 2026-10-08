@@ -538,7 +538,8 @@ class EmbeddingIntegrationTests(unittest.TestCase):
         })
         self.assertEqual(response.status_code, 303, response.get_data(as_text=True))
         query = parse_qs(urlsplit(response.headers["Location"]).query)
-        self.assertEqual(set(query), {"vetorizacao_execucao_id"})
+        self.assertEqual(set(query), {"vetorizacao_execucao_id", "aba"})
+        self.assertEqual(query["aba"], ["vetorizacao"])
         record = self.download(document_id, query["vetorizacao_execucao_id"][0]).get_json()
         self.assertEqual(record["contexto"], contextualized)
         for field, expected in (("perfil", "similaridade"), ("max_tokens", 32), ("tamanho_lote", 2), ("agregar", True)):
