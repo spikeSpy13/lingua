@@ -33,6 +33,27 @@ _MOVIMENTOS = {
     5: ("Inconclusão", "Encerre o episódio preservando uma questão significativa sem resolução, mesmo se o final for emocionalmente intenso."),
 }
 
+# Camada comum de organização textual para os cinco movimentos narrativos.
+_INSTRUCOES_LINGUISTICAS = (
+    "Organize o parágrafo como uma unidade textual com as seguintes diretrizes linguísticas. "
+    "Progressão temática: cada período deve desenvolver as informações anteriores e pode introduzir informações novas, "
+    "mantendo relações temáticas reconhecíveis; evite frases independentes que apenas compartilham um assunto. "
+    "Coesão referencial: mantenha referências compreensíveis a personagens, acontecimentos, objetos e lugares, "
+    "usando naturalmente pronomes com referentes identificáveis, retomadas lexicais, expressões semanticamente relacionadas "
+    "e referências a informações anteriores; evite repetições artificiais e não imponha a repetição de palavras específicas. "
+    "Continuidade temporal: preserve relações temporais compreensíveis e a consistência dos tempos verbais, "
+    "permitindo mudanças justificadas por lembranças, comparações ou acontecimentos, sem contradições cronológicas involuntárias. "
+    "Unidade estilística: mantenha a mesma voz narrativa nos cinco movimentos, em português brasileiro cotidiano e natural, "
+    "como uma pessoa relatando sua experiência em primeira pessoa a alguém de confiança; evite mudanças injustificadas de registro, "
+    "linguagem excessivamente literária e explicações psicológicas ou teóricas. "
+    "Relações entre períodos: encadeie os acontecimentos e as informações de modo que cada período tenha uma relação compreensível "
+    "com os demais e contribua para o desenvolvimento do parágrafo. "
+    "Coerência entre parágrafos: o primeiro movimento estabelece os elementos iniciais; do segundo em diante, "
+    "relacione o novo parágrafo à ideia geral atual e a todos os parágrafos anteriores em suas versões atuais, inclusive as edições do usuário. "
+    "Preserve a identidade dos personagens, os acontecimentos e conflitos já estabelecidos e a continuidade temporal, "
+    "sem repetir desnecessariamente informações. Essas diretrizes complementam a função específica de cada movimento. "
+)
+
 
 class ErroAPINarrativa(ValueError):
     """Falha de geração com mensagem segura para apresentação ao usuário."""
@@ -111,7 +132,6 @@ def construir_mensagens(
         sistema += (
             f"Produza somente o parágrafo {indice}, correspondente a {titulo}. {funcao} "
             "Respeite integralmente o planejamento e todos os parágrafos anteriores em suas versões atuais. "
-            "Preserve personagens, acontecimentos, relações temporais, conflitos e continuidade narrativa. "
             "Nunca reescreva ou inclua qualquer parágrafo anterior. Nunca gere a narrativa inteira. "
             "Responda com exatamente um parágrafo, contendo exatamente cinco períodos. "
             "Cada período deve conter entre 20 e 36 palavras, inclusive; o parágrafo deve ter no máximo 180 palavras. "
@@ -121,6 +141,7 @@ def construir_mensagens(
             "ou explicações psicológicas prontas. Não acrescente título, lista, comentários, justificativas, "
             "aspas que envolvam o texto, marcação Markdown ou explicações sobre as regras."
         )
+        sistema += " " + _INSTRUCOES_LINGUISTICAS
     sistema += (
         f" A intensidade dramática solicitada é {intensidade} em uma escala de 1 a 5 "
         "(1 baixa, 2 moderada, 3 significativa, 4 intensa, 5 muito intensa). "

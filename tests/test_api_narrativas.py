@@ -1,5 +1,6 @@
 """Pedidos e falhas dos provedores são simulados, sem tráfego externo."""
 
+import copy
 import io
 import json
 import os
@@ -34,12 +35,16 @@ class PromptNarrativaTests(unittest.TestCase):
             self.assertIn(componente, sistema)
         self.assertIn("não se aplicam ao planejamento", sistema)
         self.assertIn("Não escreva os cinco parágrafos", sistema)
+        self.assertNotIn(api._INSTRUCOES_LINGUISTICAS, sistema)
         dados = json.loads(mensagens[1]["content"])
         self.assertEqual(dados["campo"], 0)
         self.assertEqual(dados["intensidade_dramatica"], 4)
 
     def test_todos_anteriores_atuais_e_planejamento_integral_sao_enviados(self):
-        contexto = self.contexto(5)
+        contexto = self.contexto(5, planejamento="Planejamento editado pelo usuário.")
+        for paragrafo in contexto["anteriores"]:
+            paragrafo["texto"] = f"Versão editada pelo usuário do parágrafo {paragrafo['id']}."
+        antes = copy.deepcopy(contexto)
         mensagens = api.construir_mensagens(**contexto)
         dados = json.loads(mensagens[1]["content"])
         self.assertEqual(dados["planejamento_integral_atual"], contexto["planejamento"])
@@ -47,12 +52,14 @@ class PromptNarrativaTests(unittest.TestCase):
                          [item["texto"] for item in contexto["anteriores"]])
         self.assertEqual(dados["campo"], 5)
         self.assertEqual(dados["instrucoes_adicionais_deste_campo"], contexto["instrucoes"])
+        self.assertEqual(contexto, antes)
 
     def test_regras_completas_e_funcao_especifica_estao_em_cada_movimento(self):
         for indice, funcao in ((1, "situação inicial"), (2, "conflito narrativo"),
                                (3, "situações recorrentes"), (4, "tensão"), (5, "sem resolução")):
             with self.subTest(indice=indice):
                 sistema = api.construir_mensagens(**self.contexto(indice))[0]["content"]
+                self.assertEqual(sistema.count(api._INSTRUCOES_LINGUISTICAS), 1)
                 for requisito in (f"somente o parágrafo {indice}", funcao, "exatamente um parágrafo",
                                   "exatamente cinco períodos", "entre 20 e 36 palavras", "no máximo 180 palavras",
                                   "primeira pessoa", "português brasileiro", "dois-pontos", "ponto e vírgula",
@@ -64,6 +71,7 @@ class PromptNarrativaTests(unittest.TestCase):
     def test_correcao_inclui_alvo_erros_e_preserva_contexto(self):
         contexto = self.contexto(3, texto_atual="Parágrafo que precisa de correção.",
                                  erros=["Há um período em vez de cinco."])
+        antes = copy.deepcopy(contexto)
         mensagens = api.construir_mensagens(**contexto)
         dados = json.loads(mensagens[1]["content"])
         self.assertEqual(dados["operacao"], "corrigir_apenas_campo_atual")
@@ -71,13 +79,19 @@ class PromptNarrativaTests(unittest.TestCase):
         self.assertEqual(dados["erros_de_validacao"], contexto["erros"])
         self.assertEqual(len(dados["todos_os_paragrafos_anteriores_atuais"]), 2)
         self.assertIn("Não altere o planejamento nem os parágrafos anteriores", mensagens[0]["content"])
+        self.assertEqual(mensagens[0]["content"].count(api._INSTRUCOES_LINGUISTICAS), 1)
+        self.assertEqual(contexto, antes)
 
     def test_regeneracao_inclui_versao_atual_sem_tratar_como_correcao(self):
-        mensagens = api.construir_mensagens(**self.contexto(texto_atual="Minha versão editada."))
+        contexto = self.contexto(texto_atual="Minha versão editada.")
+        antes = copy.deepcopy(contexto)
+        mensagens = api.construir_mensagens(**contexto)
         dados = json.loads(mensagens[1]["content"])
         self.assertEqual(dados["operacao"], "gerar_apenas_campo_atual")
         self.assertEqual(dados["versao_atual_do_campo_para_regeneracao"], "Minha versão editada.")
         self.assertNotIn("texto_atual_a_corrigir", dados)
+        self.assertEqual(mensagens[0]["content"].count(api._INSTRUCOES_LINGUISTICAS), 1)
+        self.assertEqual(contexto, antes)
 
     def test_contexto_incompleto_e_parametros_invalidos_sao_rejeitados(self):
         alteracoes = ({"indice": 6}, {"indice": True}, {"intensidade": 0}, {"intensidade": 6},
