@@ -1,0 +1,7 @@
+# Instale antes uma distribuição CPU ou CUDA de torch==2.6.0 conforme documentação.
+# Estas dependências são opcionais: as etapas 01–08 continuam com requirements.txt.
+torch==2.6.0
+transformers==4.51.3
+huggingface-hub==0.30.2
+tokenizers==0.21.2
+safetensors==0.5.3

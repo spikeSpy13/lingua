@@ -311,6 +311,19 @@ button:hover { background: #1e483d; }
 .context-history { margin-top: 24px; }
 .context-history ul { padding-left: 20px; }
 .context-history time { margin-left: 8px; color: var(--muted); font-size: 12px; }
+.embedding-panel { margin-bottom: 20px; }
+.embedding-panel select { display: block; width: 100%; max-width: 380px; margin: 6px 0 12px; padding: 9px 12px; border: 1px solid #c8d3cb; border-radius: 7px; background: #fdfefb; color: var(--ink); font: inherit; }
+.embedding-panel select:focus-visible { outline: 3px solid #a2cbb5; outline-offset: 3px; }
+.embedding-result { margin-top: 24px; }
+.embedding-downloads { display: flex; flex-wrap: wrap; gap: 10px 24px; }
+.embedding-provenance { margin-top: 12px; }
+.embedding-provenance summary, .embedding-history summary { color: var(--accent); cursor: pointer; }
+.embedding-representation { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--line); }
+.embedding-representation h3 { margin: 0 0 10px; font-size: 16px; }
+.embedding-history { margin-top: 24px; }
+.embedding-history ul { padding-left: 20px; }
+.embedding-history time { margin-left: 8px; color: var(--muted); font-size: 12px; }
+.embedding-history li > span { margin-left: 8px; font-size: 12px; }
 
 @media (max-width: 600px) {
   .page { padding: 0 18px; }
@@ -326,7 +339,7 @@ button:hover { background: #1e483d; }
   .notice-success { flex-wrap: wrap; gap: 10px; }
   .new-text { margin-left: 40px; }
   button { width: 100%; }
-  .annotation-panel button, .syntax-panel button, .rules-panel button, .context-panel button { white-space: normal; }
+  .annotation-panel button, .syntax-panel button, .rules-panel button, .context-panel button, .embedding-panel button { white-space: normal; }
   .occurrence-summary { grid-template-columns: 1fr; gap: 3px; }
   .occurrence-summary dd { margin-bottom: 7px; }
 }

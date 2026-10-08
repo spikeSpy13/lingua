@@ -9,6 +9,9 @@ versionadas acrescentam ocorrências de orações, negação, tempo, modalidade
 e conectores, com evidências e propostas de alcance. Cada período recebe
 uma unidade de contexto, com o foco, os vizinhos selecionados e as referências
 às anotações existentes.
+Uma etapa opcional de vetorização gera representações do foco, da janela e
+do documento, com modelo e revisões fixos, blocos rastreáveis para textos
+longos e vetores associados à origem exata.
 Os registros JSON contêm versões, hashes SHA-256,
 metadados e posições que apontam até o original.
 
@@ -163,13 +166,54 @@ semânticas novas nem declara ambiguidades resolvidas por incluir mais texto.
 Cada execução possui seu próprio ID e fica no histórico. Os textos exatos do
 foco e da janela recebem hashes SHA-256, e a seleção recebe uma identidade
 lógica estável, independente do ID e da data da execução. Somente um registro
-validado recebe `pronto_para_etapa_09: true`. A vetorização da etapa 09 ainda
-não é executada.
+validado recebe `pronto_para_etapa_09: true` e pode seguir para a vetorização.
 
 Veja [uso direto, identidade, limites e API HTTP](docs/unidades_contexto.md),
 a [especificação consolidada](docs/especificacao_etapa08.md) e os exemplos com
 [preservação literal](examples/unidades_contexto_literal.json) e
 [normalização opcional de CRLF](examples/unidades_contexto_normalizada.json).
+
+## Vetorizar foco, janela e documento
+
+A etapa 09 é opcional e utiliza inicialmente `intfloat/multilingual-e5-large`.
+CPU é o padrão; CUDA pode ser configurada, sem exigir GPU. As etapas 01 a 08
+continuam funcionando com as dependências originais e sem baixar esse modelo.
+Para instalar as dependências de embeddings, recomendamos Python 3.10 a 3.12
+por compatibilidade com as versões fixadas de PyTorch e Transformers.
+
+No macOS ou Linux, dentro de `linguaSpike`:
+
+```bash
+.venv/bin/python -m pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+.venv/bin/python -m pip install -r requirements-embeddings.txt
+.venv/bin/python -m embeddings_e5 preparar --modelo intfloat/multilingual-e5-large --revisao main --baixar
+.venv/bin/python app.py
+```
+
+No Windows:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+.\.venv\Scripts\python.exe -m pip install -r requirements-embeddings.txt
+.\.venv\Scripts\python.exe -m embeddings_e5 preparar --modelo intfloat/multilingual-e5-large --revisao main --baixar
+.\.venv\Scripts\python.exe app.py
+```
+
+O comando de preparação consulta o Hugging Face, resolve `main` para uma revisão
+imutável dos pesos e do tokenizador, baixa os arquivos e salva a configuração
+local em `instance/embeddings_modelo.json`. A geração utiliza esse cache local;
+sem configuração ou pesos disponíveis, apresenta um erro explícito. Pesos e
+configurações locais não são enviados pelo Git.
+
+Escolha uma execução contextual pronta e use **Vetorizar conteúdo e
+unidades**. Cada resultado conserva o texto exato e seus hashes, identifica
+modelo, revisões e perfil, e mantém os vetores individuais dos blocos quando
+há divisão de entradas longas. A inferência ocorre fora da transação SQLite;
+resultados e falhas ficam no histórico. A consulta e a exportação não
+executam novamente o modelo.
+
+Veja [instalação, configuração CPU/GPU, contrato e API](docs/vetorizacao.md)
+e a [especificação consolidada da etapa 09](docs/especificacao_etapa09.md).
 
 ## Dados locais
 
@@ -199,6 +243,10 @@ A tabela é criada automaticamente sem apagar registros anteriores.
 As execuções da etapa 08 ficam na tabela `context_runs`, vinculadas à execução
 exata de regras. Cada linha conserva sua política e origem; gerar novas
 análises, regras ou janelas não altera o histórico contextual.
+As execuções da etapa 09 ficam em `embedding_runs`, vinculadas à execução
+contextual exata. As tabelas auxiliares guardam vetores binários, cálculos
+reutilizáveis e associações de origem; são criadas de forma aditiva. Um backup
+do SQLite inclui os vetores, sem depender de arquivos NumPy externos.
 
 ## Sincronizar o código
 
@@ -232,6 +280,9 @@ Depois de atualizar para a etapa 05, instale as dependências e o modelo portugu
 As etapas 05 e 06 compartilham esse modelo; a etapa 06 não exige um novo download
 quando as dependências já estão instaladas. A etapa 07 não acrescenta dependências.
 A etapa 08 também não acrescenta dependências nem exige outro modelo.
+A etapa 09 acrescenta dependências opcionais em `requirements-embeddings.txt`
+e requer a preparação local do modelo descrita acima. Não reinstale ou baixe
+os pesos a cada atualização se o perfil e suas revisões continuarem iguais.
 Na raiz `linguaSpike`, no macOS ou Linux:
 
 ```bash
@@ -278,6 +329,11 @@ A etapa 08 verifica seleções contextuais com referências independentes,
 fronteiras de parágrafos, raios e tipos estritos, recortes e hashes exatos,
 identidade lógica estável, anotações por proprietário, pendências herdadas,
 limites de recursos, adulterações, consultas e histórico com bancos temporários.
+A etapa 09 utiliza um gerador simulado e determinístico para verificar os
+contratos, limites, hashes, blocos, agregação, reutilização, armazenamento e
+exportação. Esses resultados são identificados como simulação. Os testes de
+inferência E5 real são separados e opcionais; consulte os comandos e condições
+em [vetorizacao.md](docs/vetorizacao.md).
 O relato
 de três parágrafos e dezesseis períodos ainda
 não foi fornecido e suas contagens não foram verificadas.

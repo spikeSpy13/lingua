@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Unidades de contexto · Análise linguística</title>
+    <title>Contexto e vetorização · Análise linguística</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   </head>
   <body>
@@ -13,7 +13,7 @@
           <span class="brand-mark" aria-hidden="true">a<span>l</span></span>
           <span>Análise linguística</span>
         </a>
-        <span class="stage">Textos, regras e contexto</span>
+        <span class="stage">Textos, regras, contexto e vetores</span>
       </header>
 
       <main>
@@ -642,6 +642,92 @@
           </details>
           {% endif %}
         </section>
+        {% if contextualized|default(none) %}
+        <section class="editor embedding-panel" aria-labelledby="embedding-title">
+          <div class="editor-heading">
+            <h2 id="embedding-title">Vetorização</h2>
+            <p>Gere representações do foco, da janela e do documento completo a partir desta execução contextual.</p>
+          </div>
+          <form method="post" action="{{ url_for('vectorize_submission', record_id=record.id) }}">
+            <input type="hidden" name="contexto_execucao_id" value="{{ contextualized.execucao_id }}">
+            <label for="embedding-profile">Finalidade dos vetores
+              <select id="embedding-profile" name="perfil">
+                <option value="recuperacao">Conteúdo para recuperação</option>
+                <option value="similaridade">Comparação entre textos</option>
+                <option value="consulta">Consulta para recuperação</option>
+              </select>
+            </label>
+            <label class="technical-option"><input type="checkbox" name="agregar" checked> Gerar também um vetor agregado para textos longos</label>
+            <button type="submit">Vetorizar conteúdo e unidades <span aria-hidden="true">→</span></button>
+          </form>
+          <p class="local-processing">O modelo configurado pode usar CPU ou GPU. Textos longos são divididos em blocos completos; uma média agregada pode perder relações e ordem entre blocos.</p>
+
+          {% if vectorized|default(none) %}
+          <div class="embedding-result">
+            {% if vectorized.estado|default('concluida') == 'falhou' %}
+            <p class="notice notice-error" role="status">A vetorização falhou. {{ vectorized.erro.mensagem }}</p>
+            <p>Nenhuma representação parcial foi salva como resultado concluído.</p>
+            <a class="download-link" href="{{ url_for('embedding_json', record_id=record.id, vetorizacao_execucao_id=vectorized.execucao_id) }}">Baixar diagnóstico JSON <span aria-hidden="true">↓</span></a>
+            {% else %}
+            {% if vectorized.modelo.natureza == 'simulado_teste' %}
+            <p class="notice notice-error" role="status">Embeddings simulados de teste. Estes resultados não são inferência do modelo real.</p>
+            {% else %}
+            <p class="rule-readiness" role="status">Vetorização concluída e integridade validada.</p>
+            {% endif %}
+            <p><strong>Modelo:</strong> {{ vectorized.modelo.identificacao }} · {{ vectorized.modelo.dimensao }} dimensões.</p>
+            <div class="embedding-downloads">
+              <a class="download-link" href="{{ url_for('embedding_json', record_id=record.id, vetorizacao_execucao_id=vectorized.execucao_id) }}">Baixar vetorização JSON <span aria-hidden="true">↓</span></a>
+              <a class="download-link" href="{{ url_for('embedding_zip', record_id=record.id, vetorizacao_execucao_id=vectorized.execucao_id) }}">Baixar vetores ZIP <span aria-hidden="true">↓</span></a>
+            </div>
+            <details class="embedding-provenance">
+              <summary>Modelo, configuração e origem</summary>
+              <dl class="context-positions">
+                <dt>Execução de vetorização</dt><dd>{{ vectorized.execucao_id }}</dd>
+                <dt>Execução contextual</dt><dd>{{ vectorized.contexto_execucao_id }}</dd>
+                <dt>Revisão do modelo</dt><dd>{{ vectorized.modelo.revisao }}</dd>
+                <dt>Revisão do tokenizador</dt><dd>{{ vectorized.modelo.tokenizador.revisao }}</dd>
+                <dt>Perfil e prefixo</dt><dd>{{ vectorized.configuracao.perfil }} · {{ vectorized.configuracao.prefixo }}</dd>
+                <dt>Dispositivo e precisão</dt><dd>{{ vectorized.modelo.ambiente.dispositivo }} · {{ vectorized.modelo.ambiente.precisao_calculo }}</dd>
+                <dt>Compatibilidade vetorial</dt><dd>{{ vectorized.compatibilidade.sha256 }}</dd>
+                <dt>Hash da origem contextual</dt><dd>{{ vectorized.contexto_sha256 }}</dd>
+              </dl>
+              <p class="annotation-note">Compatibilidade depende da configuração completa, incluindo modelo e revisão; dimensões iguais não garantem o mesmo espaço vetorial.</p>
+            </details>
+            {% for representation in vectorized.representacoes %}
+            <article class="embedding-representation">
+              <h3>{{ {'foco':'Foco', 'janela':'Janela', 'documento':'Documento'}.get(representation.tipo, representation.tipo) }}{% if representation.periodo_foco_id %} · período de origem{% endif %}</h3>
+              <p class="period-text">{{ representation.texto }}</p>
+              <p class="context-neighbor-count">{{ {'direta':'Representação direta', 'agregada':'Representação agregada', 'blocos':'Vetores individuais de blocos', 'sem_conteudo':'Sem conteúdo para gerar vetor'}.get(representation.construcao, representation.construcao) }} · {{ representation.blocos|length }} bloco(s).</p>
+              <details class="embedding-provenance">
+                <summary>Origem e integridade da representação</summary>
+                <dl class="context-positions">
+                  <dt>Representação</dt><dd>{{ representation.id }}</dd>
+                  <dt>Campo de origem</dt><dd>{{ representation.campo }}</dd>
+                  <dt>Hash SHA-256 do texto</dt><dd>{{ representation.sha256_texto }}</dd>
+                  <dt>Identidade lógica</dt><dd>{{ representation.representacao_logica_id }}</dd>
+                  {% if representation.unidade_id %}<dt>Unidade de origem</dt><dd>{{ representation.unidade_id }}</dd>{% endif %}
+                  {% if representation.janela_logica_id %}<dt>Identidade lógica da janela</dt><dd>{{ representation.janela_logica_id }}</dd>{% endif %}
+                  {% if representation.vetor %}<dt>Hash dos bytes do vetor</dt><dd>{{ representation.vetor.sha256_bytes }}</dd>{% endif %}
+                </dl>
+                <a href="{{ url_for('embedding_representation_json', record_id=record.id, vetorizacao_execucao_id=vectorized.execucao_id, representacao_id=representation.id) }}">Consultar representação JSON</a>
+              </details>
+            </article>
+            {% endfor %}
+            {% endif %}
+          </div>
+          {% endif %}
+          {% if embedding_history|default([]) %}
+          <details class="embedding-history">
+            <summary>Execuções de vetorização salvas ({{ embedding_history|length }})</summary>
+            <ul>{% for history in embedding_history %}<li>
+              <a href="{{ url_for('submission', record_id=record.id, vetorizacao_execucao_id=history.vetorizacao_execucao_id) }}"{% if vectorized and history.vetorizacao_execucao_id == vectorized.execucao_id %} aria-current="page"{% endif %}>Vetorização #{{ history.id }}</a>
+              <time datetime="{{ history.registrado_em }}">{{ history.registrado_em|horario_brasilia }} (horário de Brasília)</time>
+              <span>{% if history.estado == 'falhou' %}Falhou{% else %}Concluída{% endif %}</span>
+            </li>{% endfor %}</ul>
+          </details>
+          {% endif %}
+        </section>
+        {% endif %}
         {% endif %}
         {% endif %}
         {% endif %}
