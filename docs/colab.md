@@ -23,6 +23,10 @@ necessário instalar ou baixar esse modelo no Mac para exportar o pacote.
    O primeiro preparo precisa acessar o Hugging Face e baixar os pesos.
 7. Baixe o JSON e o ZIP de resultados produzidos pelo notebook. Eles
    conservam a origem e podem ser conferidos sem executar o E5 novamente.
+8. No aplicativo local, abra a execução de contexto usada para gerar o pacote.
+   Na aba **Vetorização**, use **Importar resultados**, selecione o ZIP de
+   resultados e envie. A execução passa a constar no histórico, com seus
+   vetores e a indicação de importação.
 
 O notebook contém opções de dispositivo, precisão, finalidade, tamanho do
 lote, limite de tokens e agregação. A configuração inicial do ZIP utiliza
@@ -30,9 +34,9 @@ os padrões do aplicativo. Alterações no formulário de vetorização local
 não mudam o download; ajuste as opções do notebook antes de executar.
 GPU é opcional, e CUDA explicitamente solicitada exige uma GPU disponível.
 
-O download do pacote não altera o texto nem as etapas anteriores. A execução
-no Colab não registra resultados automaticamente no SQLite do aplicativo
-local. Guarde os arquivos de resultados para consulta e transferência.
+O download do pacote não altera o texto nem as etapas anteriores. Para salvar
+os resultados no SQLite local, importe o ZIP pela interface. Guarde também
+os arquivos de resultados para consulta e transferência.
 
 ## Conteúdo e integridade
 
@@ -56,6 +60,36 @@ integridade, não qualidade semântica.
 CPU e GPU podem produzir pequenas diferenças numéricas. Registros históricos
 preservam os bytes gerados e os metadados do ambiente; repetir uma execução
 não garante igualdade de todos os bytes em dispositivos distintos.
+
+## Importar os resultados no aplicativo
+
+O upload aceita o ZIP de resultados produzido pelo notebook e o ZIP de vetores
+exportado pelo próprio aplicativo. O pacote de entrada do Colab, que contém
+`contexto.json` e os módulos, deve ser enviado ao notebook.
+
+Escolha a execução de contexto utilizada na exportação, mesmo que já existam
+versões mais recentes. O importador confere o ZIP, os hashes, o manifesto,
+os bytes dos vetores e o registro da etapa 09. Ele exige correspondência
+integral com a origem da etapa 08 armazenada no banco local. Uma origem ausente
+ou diferente impede a importação, sem alterar o histórico.
+
+O aplicativo mantém os IDs, os horários de geração, o modelo, a configuração
+e os vetores exatos do resultado. Registra separadamente o horário da importação
+e o SHA-256 do ZIP. Uma execução idêntica já salva é reconhecida sem duplicação;
+um ID existente com conteúdo diferente é recusado. A gravação dos resultados
+e da proveniência é atômica. A importação não baixa o modelo nem executa inferência.
+
+O ZIP pode ter até 64 MiB, cada arquivo até 96 MiB e o conteúdo descompactado
+até 128 MiB. O limite de 2 MiB permanece para o envio de texto. Nenhum arquivo
+do ZIP é executado ou extraído no sistema de arquivos.
+
+Na API, envie `POST /envios/<id>/vetorizacoes/importar?contexto_execucao_id=...`
+com `Content-Type: application/zip` e o ZIP no corpo. O retorno JSON identifica
+documento, contexto e vetorização: 201 para uma importação nova e 200 para uma
+execução idêntica já existente. A interface usa um formulário multipart com
+`arquivo` e `contexto_execucao_id` e volta à execução importada após o sucesso.
+Entrada inválida retorna 400, origem ausente 404, conflito 409 e excesso de
+tamanho 413. Embeddings simulados são aceitos somente em modo de teste.
 
 ## Downloads HTTP
 

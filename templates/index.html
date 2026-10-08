@@ -767,6 +767,18 @@
             <p class="colab-note">O ZIP inclui o texto e as anotações desta execução de contexto para processamento no Colab. A configuração pode ser ajustada no notebook antes de gerar os vetores.</p>
           </div>
 
+          <section class="embedding-import" aria-labelledby="embedding-import-title">
+            <h3 id="embedding-import-title">Importar resultados</h3>
+            <p>Já gerou os vetores no Colab? Envie o ZIP de resultados para salvá-los no histórico deste documento.</p>
+            <form method="post" action="{{ url_for('import_embedding_result', record_id=record.id) }}" enctype="multipart/form-data">
+              <input type="hidden" name="contexto_execucao_id" value="{{ contextualized.execucao_id }}">
+              <label for="embedding-result-zip">ZIP de resultados</label>
+              <input id="embedding-result-zip" type="file" name="arquivo" accept=".zip,application/zip" required aria-describedby="embedding-import-help">
+              <p class="option-help" id="embedding-import-help">Até 64 MB. Os resultados devem corresponder a esta execução de contexto. Reenviar a mesma execução não duplica o histórico.</p>
+              <button type="submit">Importar resultados <span aria-hidden="true">↑</span></button>
+            </form>
+          </section>
+
           {% if vectorized|default(none) %}
           <div class="embedding-result">
             {% if vectorized.estado|default('concluida') == 'falhou' %}
@@ -777,8 +789,9 @@
             {% if vectorized.modelo.natureza == 'simulado_teste' %}
             <p class="notice notice-error" role="status">Embeddings simulados de teste. Estes resultados não são inferência do modelo real.</p>
             {% else %}
-            <p class="rule-readiness" role="status">Vetorização concluída e integridade validada.</p>
+            <p class="rule-readiness" role="status">{% if embedding_import|default(none) %}Vetorização importada e integridade validada.{% else %}Vetorização concluída e integridade validada.{% endif %}</p>
             {% endif %}
+            {% if embedding_import|default(none) %}<p class="annotation-note">Importada de um ZIP em {{ embedding_import.imported_at|horario_brasilia }} (horário de Brasília).</p>{% endif %}
             <p><strong>Modelo:</strong> {{ vectorized.modelo.identificacao }} · {{ vectorized.modelo.dimensao }} dimensões.</p>
             <div class="embedding-downloads">
               <a class="download-link" href="{{ url_for('embedding_json', record_id=record.id, vetorizacao_execucao_id=vectorized.execucao_id) }}">Baixar vetorização JSON <span aria-hidden="true">↓</span></a>
@@ -795,6 +808,7 @@
                 <dt>Dispositivo e precisão</dt><dd>{{ vectorized.modelo.ambiente.dispositivo }} · {{ vectorized.modelo.ambiente.precisao_calculo }}</dd>
                 <dt>Compatibilidade vetorial</dt><dd>{{ vectorized.compatibilidade.sha256 }}</dd>
                 <dt>Hash da origem contextual</dt><dd>{{ vectorized.contexto_sha256 }}</dd>
+                {% if embedding_import|default(none) %}<dt>Hash SHA-256 do ZIP importado</dt><dd>{{ embedding_import.package_sha256 }}</dd>{% endif %}
               </dl>
               <p class="annotation-note">Compatibilidade depende da configuração completa, incluindo modelo e revisão; dimensões iguais não garantem o mesmo espaço vetorial.</p>
             </details>
@@ -828,6 +842,7 @@
               <a href="{{ url_for('submission', aba='vetorizacao', record_id=record.id, vetorizacao_execucao_id=history.vetorizacao_execucao_id) }}"{% if vectorized and history.vetorizacao_execucao_id == vectorized.execucao_id %} aria-current="page"{% endif %}>Vetorização #{{ history.id }}</a>
               <time datetime="{{ history.registrado_em }}">{{ history.registrado_em|horario_brasilia }} (horário de Brasília)</time>
               <span>{% if history.estado == 'falhou' %}Falhou{% else %}Concluída{% endif %}</span>
+              {% if history.imported_at|default(none) %}<span>Importada do ZIP</span>{% endif %}
             </li>{% endfor %}</ul>
           </details>
           {% endif %}

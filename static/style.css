@@ -400,6 +400,12 @@ button:hover { background: #1e483d; }
 .colab-export h3 { margin: 0 0 10px; font-size: 16px; }
 .colab-export p { margin: 0 0 14px; font-size: 14px; }
 .colab-export .colab-note { margin: 14px 0 0; color: var(--muted); font-size: 13px; }
+.embedding-import { margin-top: 20px; padding: 18px 20px; border: 1px solid var(--line); border-radius: 9px; }
+.embedding-import h3 { margin: 0 0 10px; font-size: 16px; }
+.embedding-import > p { margin: 0 0 16px; font-size: 14px; }
+.embedding-import input[type="file"] { display: block; width: 100%; min-width: 0; margin: 8px 0; padding: 10px; border: 1px solid var(--line); border-radius: 7px; background: #fdfefb; color: var(--ink); font: inherit; }
+.embedding-import input[type="file"]:focus-visible { outline: 3px solid #a2cbb5; outline-offset: 3px; }
+.embedding-import .option-help { margin: 10px 0 16px; }
 .embedding-provenance { margin-top: 12px; }
 .embedding-provenance summary, .embedding-history summary { color: var(--accent); cursor: pointer; }
 .embedding-representation { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--line); }

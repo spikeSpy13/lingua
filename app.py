@@ -54,6 +54,9 @@ from vetorizacao import (
 )
 from embeddings_e5 import criar_gerador_padrao
 from exportacao_colab import exportar_notebook, exportar_pacote_colab
+from importacao_vetores import (
+    ErroImportacaoVetores, ErroLimiteImportacao, MAX_BYTES_ZIP, ler_resultado_zip,
+)
 from persistencia_vetores import (
     ErroPersistenciaVetores,
     criar_tabelas as criar_tabelas_vetores,
@@ -485,6 +488,7 @@ def create_app(config=None):
     app.config.from_mapping(
         DATABASE=os.environ.get("ANALISE_DB", str(BASE / "instance" / "textos.sqlite3")),
         MAX_CONTENT_LENGTH=2 * 1024 * 1024,
+        IMPORT_MAX_CONTENT_LENGTH=MAX_BYTES_ZIP + 1024 * 1024,
         EMBEDDING_OPTIONS={},
         EMBEDDING_CONFIGURATION={},
         EMBEDDING_CACHE_MAX_ARTIFACTS=2000,
@@ -590,6 +594,14 @@ def create_app(config=None):
             "CREATE INDEX IF NOT EXISTS context_runs_rules ON context_runs (submission_id, rule_execution_id, id)"
         )
         criar_tabelas_vetores(connection)
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS embedding_imports (
+                execution_id TEXT PRIMARY KEY REFERENCES embedding_runs(execution_id),
+                package_sha256 TEXT NOT NULL,
+                imported_at TEXT NOT NULL,
+                package_format TEXT NOT NULL
+            )"""
+        )
         connection.commit()
 
     @app.get("/")
@@ -743,10 +755,17 @@ def create_app(config=None):
                 if embedding_execution_id is None:
                     vectorized = latest_embedding_run(connection, row, context_execution_id=contextualized["execucao_id"]) if contextualized else None
                 embedding_history = connection.execute(
-                    """SELECT id, execution_id AS vetorizacao_execucao_id, registered_at AS registrado_em, status AS estado
-                       FROM embedding_runs WHERE submission_id = ? AND context_execution_id = ? ORDER BY id DESC""",
+                    """SELECT r.id, r.execution_id AS vetorizacao_execucao_id,
+                              r.registered_at AS registrado_em, r.status AS estado,
+                              i.imported_at, i.package_sha256
+                       FROM embedding_runs r LEFT JOIN embedding_imports i ON i.execution_id = r.execution_id
+                       WHERE r.submission_id = ? AND r.context_execution_id = ? ORDER BY r.id DESC""",
                     (record_id, contextualized["execucao_id"]),
                 ).fetchall() if contextualized else []
+                embedding_import = connection.execute(
+                    "SELECT * FROM embedding_imports WHERE execution_id = ?",
+                    (vectorized["execucao_id"],),
+                ).fetchone() if vectorized else None
                 context_history = connection.execute(
                     """SELECT id, execution_id AS contexto_execucao_id, registered_at AS registrado_em
                        FROM context_runs WHERE submission_id = ? AND rule_execution_id = ? ORDER BY id DESC""",
@@ -791,6 +810,7 @@ def create_app(config=None):
             ruled=ruled, rule_history=[dict(item) for item in rule_history],
             contextualized=contextualized, context_history=[dict(item) for item in context_history],
             vectorized=vectorized, embedding_history=[dict(item) for item in embedding_history],
+            embedding_import=dict(embedding_import) if embedding_import else None,
             **workflow_context(
                 record=record, prepared=prepared, segmented=segmented, annotated=annotated,
                 analyzed=analyzed, ruled=ruled, contextualized=contextualized,
@@ -1254,6 +1274,124 @@ def create_app(config=None):
             headers={"Content-Disposition": f'attachment; filename="lingua-colab-{record_id}.zip"'},
         )
 
+    @app.post("/envios/<int:record_id>/vetorizacoes/importar")
+    def import_embedding_result(record_id):
+        # O limite maior vale somente para este upload, antes de ler o corpo.
+        # O recebimento de textos conserva o limite global de 2 MiB.
+        request.max_content_length = app.config["IMPORT_MAX_CONTENT_LENGTH"]
+        api_request = request.mimetype == "application/zip"
+        return_context_id = None
+
+        def import_error_response(message, status):
+            if request.mimetype != "multipart/form-data":
+                return {"erro": message}, status
+            selectors = {"aba": "vetorizacao"}
+            if return_context_id is not None:
+                selectors["contexto_execucao_id"] = return_context_id
+            return render_template(
+                "importacao_erro.html", message=message,
+                return_url=url_for("submission", record_id=record_id, **selectors),
+            ), status
+
+        if api_request:
+            if set(request.args) != {"contexto_execucao_id"} or len(request.args.getlist("contexto_execucao_id")) != 1:
+                return import_error_response("Informe contexto_execucao_id uma única vez na consulta.", 400)
+            context_execution_id = request.args["contexto_execucao_id"]
+            package = request.get_data(cache=False)
+        elif request.mimetype == "multipart/form-data":
+            if request.args or set(request.form) != {"contexto_execucao_id"} or len(request.form.getlist("contexto_execucao_id")) != 1:
+                return import_error_response("Selecione uma única execução contextual para importar.", 400)
+            if set(request.files) != {"arquivo"} or len(request.files.getlist("arquivo")) != 1:
+                return import_error_response("Envie um único arquivo ZIP no campo arquivo.", 400)
+            context_execution_id = request.form["contexto_execucao_id"]
+            upload = request.files["arquivo"]
+            if not upload.filename:
+                return import_error_response("Selecione o ZIP de resultados da etapa 09.", 400)
+            package = upload.stream.read(MAX_BYTES_ZIP + 1)
+        else:
+            return import_error_response("Envie o ZIP como arquivo multipart ou corpo application/zip.", 400)
+        if not context_execution_id.strip():
+            return import_error_response("contexto_execucao_id deve ser uma string não vazia.", 400)
+        if not api_request:
+            # Um ZIP inválido também deve voltar à seleção histórica enviada.
+            # Esta consulta apenas confirma a existência; a validação integral
+            # da origem continua obrigatória antes de persistir qualquer vetor.
+            with closing(connect_database(app.config["DATABASE"])) as connection:
+                selected_context = connection.execute(
+                    "SELECT 1 FROM context_runs WHERE submission_id = ? AND execution_id = ?",
+                    (record_id, context_execution_id),
+                ).fetchone()
+            if selected_context is not None:
+                return_context_id = context_execution_id
+        if len(package) > MAX_BYTES_ZIP:
+            return import_error_response("O ZIP excedeu o limite de 64 MiB.", 413)
+        try:
+            vectorized = ler_resultado_zip(package, permitir_simulado=bool(app.config["TESTING"]))
+        except ErroLimiteImportacao as error:
+            return import_error_response(str(error), 413)
+        except ErroImportacaoVetores as error:
+            return import_error_response(str(error), 400)
+        source_errors = (ErroPreparacao, ErroSegmentacao, ErroAnotacao, ErroAnalise, ErroRegras, ErroContexto, ErroPersistenciaVetores)
+        try:
+            with closing(connect_database(app.config["DATABASE"])) as connection:
+                connection.execute("BEGIN")
+                document = connection.execute("SELECT * FROM submissions WHERE id = ?", (record_id,)).fetchone()
+                if document is None:
+                    return import_error_response("Documento não encontrado. A origem deve existir neste aplicativo.", 404)
+                if vectorized["documento_id"] != record_id or vectorized["contexto_execucao_id"] != context_execution_id:
+                    return import_error_response("O ZIP pertence a outro documento ou a outra execução contextual.", 409)
+                contextualized = latest_context_run(connection, document, execution_id=context_execution_id)
+                if contextualized is None:
+                    return import_error_response("Execução contextual não encontrada. Importe no aplicativo que produziu a etapa 08.", 404)
+                if not contextualized["validacao"]["pronto_para_etapa_09"]:
+                    return import_error_response("A execução contextual ainda não está pronta para a etapa 09.", 409)
+                return_context_id = context_execution_id
+                if json_canonico(vectorized["contexto"]) != json_canonico(contextualized):
+                    return import_error_response("A origem da etapa 08 no ZIP difere da execução contextual armazenada. Nenhum resultado foi salvo.", 409)
+                origin_snapshot = context_origin_snapshot(connection, record_id, contextualized)
+        except source_errors as error:
+            return import_error_response(str(error), 409)
+
+        imported = False
+        try:
+            with closing(connect_database(app.config["DATABASE"])) as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                if context_origin_snapshot(connection, record_id, contextualized) != origin_snapshot:
+                    return import_error_response("A origem contextual mudou durante a importação. Nenhum resultado foi salvo.", 409)
+                existing = connection.execute(
+                    "SELECT * FROM embedding_runs WHERE execution_id = ?", (vectorized["execucao_id"],),
+                ).fetchone()
+                if existing is not None:
+                    if (
+                        existing["status"] != "concluida"
+                        or existing["submission_id"] != record_id
+                        or existing["context_execution_id"] != context_execution_id
+                        or existing["registered_at"] != vectorized["registrado_em"]
+                        or json_canonico(ler_execucao_vetorial(connection, existing)) != json_canonico(vectorized)
+                    ):
+                        return import_error_response("Esse identificador de vetorização já existe com outro conteúdo. Nenhum resultado foi sobrescrito.", 409)
+                else:
+                    salvar_execucao_vetorial(connection, vectorized)
+                    connection.execute(
+                        """INSERT INTO embedding_imports
+                           (execution_id, package_sha256, imported_at, package_format)
+                           VALUES (?, ?, ?, ?)""",
+                        (vectorized["execucao_id"], sha256(package).hexdigest(),
+                         datetime.now(timezone.utc).isoformat(), "lingua_etapa09_zip"),
+                    )
+                    connection.commit()
+                    imported = True
+        except source_errors as error:
+            return import_error_response(str(error), 409)
+        except sqlite3.IntegrityError:
+            return import_error_response("A importação conflitou com um registro existente. Nenhum resultado foi salvo.", 409)
+        if api_request:
+            return {
+                "importada": imported, "vetorizacao_execucao_id": vectorized["execucao_id"],
+                "contexto_execucao_id": context_execution_id, "documento_id": record_id,
+            }, 201 if imported else 200
+        return redirect(url_for("submission", record_id=record_id, vetorizacao_execucao_id=vectorized["execucao_id"], aba="vetorizacao"), code=303)
+
     @app.post("/envios/<int:record_id>/vetorizacoes")
     def vectorize_submission(record_id):
         allowed = {"contexto_execucao_id", "execucao_id", "registrado_em", "configuracao"}
@@ -1456,6 +1594,14 @@ def create_app(config=None):
 
     @app.errorhandler(413)
     def too_large(_error):
+        if request.endpoint == "import_embedding_result":
+            if request.mimetype == "multipart/form-data":
+                return render_template(
+                    "importacao_erro.html",
+                    message="O upload da importação excedeu o limite permitido. Envie um ZIP de até 64 MiB.",
+                    return_url=url_for("submission", record_id=request.view_args["record_id"], aba="vetorizacao"),
+                ), 413
+            return {"erro": "O upload da importação excedeu o limite permitido. Envie um ZIP de até 64 MiB."}, 413
         return render_template(
             "index.html", content="", record=None,
             error="O envio excedeu o limite de 2 MB. Envie um texto menor.",

@@ -235,7 +235,11 @@ Para executar a etapa 09 no Google Colab, use **Baixar notebook Colab** e
 **Baixar pacote Colab ZIP** no painel de vetorização. Abra o notebook no Colab,
 envie o ZIP quando solicitado e execute as células na ordem. O notebook
 permite CPU ou GPU e baixa os resultados com sua origem preservada. Esse
-fluxo não exige instalar o E5 no computador local. Veja o
+fluxo não exige instalar o E5 no computador local. Depois, na mesma execução
+de contexto, use **Importar resultados**, selecione o ZIP de resultados e
+confirme o envio. O aplicativo valida o pacote e salva os vetores no histórico,
+sem repetir a inferência. Reenviar a mesma execução não duplica os registros.
+Veja o
 [passo a passo do Colab](docs/colab.md).
 
 ## Dados locais
@@ -247,7 +251,8 @@ arquivo com o aplicativo encerrado.
 
 A tabela `submissions` guarda `id`, `content` e `created_at` (data em UTC no formato
 ISO 8601). O conteúdo preserva espaços, acentos e quebras de linha. Textos vazios
-são recusados e cada requisição tem limite de 2 MB. Para escolher outro caminho
+são recusados e o envio de texto tem limite de 2 MB. A importação de resultados
+permite ZIPs de até 64 MB. Para escolher outro caminho
 para o banco, defina a variável `ANALISE_DB` antes de iniciar o aplicativo.
 As preparações ficam na tabela `preparations`, no mesmo banco, sem sobrescrever
 os textos recebidos. A nova tabela é criada automaticamente ao atualizar o app.

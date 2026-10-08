@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Importar resultados · Análise linguística</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  </head>
+  <body>
+    <div class="page">
+      <header class="site-header">
+        <a class="brand" href="{{ url_for('index') }}" aria-label="Análise linguística — início">
+          <span class="brand-mark" aria-hidden="true">a<span>l</span></span>
+          <span>Análise linguística</span>
+        </a>
+      </header>
+      <main>
+        <section class="editor">
+          <div class="editor-heading"><h1>Importação não concluída</h1></div>
+          <p class="notice notice-error" role="alert">{{ message }}</p>
+          <p>Os resultados anteriores continuam preservados.</p>
+          <a class="workflow-previous" href="{{ return_url }}">← Voltar ao aplicativo</a>
+        </section>
+      </main>
+      <footer class="site-footer">Um espaço para organizar sua análise, etapa por etapa.</footer>
+    </div>
+  </body>
+</html>

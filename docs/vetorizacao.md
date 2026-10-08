@@ -297,7 +297,10 @@ O painel também permite **Baixar notebook Colab** e **Baixar pacote Colab
 ZIP** para gerar os vetores no Google Colab, em CPU ou GPU. A exportação
 revalida a execução contextual selecionada, inclui sua origem exata e não
 carrega o modelo no computador local. O notebook baixa resultados JSON e
-ZIP com os contratos da etapa 09. Veja [como executar no Colab](colab.md).
+ZIP com os contratos da etapa 09. Use **Importar resultados** na mesma execução
+contextual para salvar o ZIP de resultados no histórico local, com validação
+da origem e dos vetores e sem repetir a inferência. Veja
+[como executar no Colab e importar os resultados](colab.md).
 
 No aplicativo, escolha uma execução contextual pronta e use **Vetorizar
 conteúdo e unidades**. O painel apresenta modelo, configuração,
