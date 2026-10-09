@@ -16,8 +16,9 @@ Os registros JSON contêm versões, hashes SHA-256,
 metadados e posições que apontam até o original.
 
 O botão **Gerar narrativa** abre um gerador progressivo de narrativas ficcionais
-em primeira pessoa, com planejamento e cinco parágrafos editáveis. Cada movimento
-é gerado, validado e aprovado separadamente. A geração usa OpenRouter com a chave
+em primeira pessoa, com cinco abas, uma por movimento e parágrafo. Cada movimento
+é gerado, editado, validado e aprovado separadamente. O seletor permite adicionar
+modelos pelo identificador do OpenRouter. A geração usa a chave
 `NARRATIVA_API_KEY`; edição manual, validação e montagem funcionam localmente.
 Veja [fluxo, configuração da API e exportação](docs/narrativas.md).
 

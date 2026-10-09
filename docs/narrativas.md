@@ -5,20 +5,24 @@ do Língua e não depende de registrar um texto ou executar a análise linguíst
 O comportamento do projeto de geração progressiva foi integrado ao aplicativo
 existente, com persistência em SQLite.
 
-Crie um rascunho com uma ideia inicial. O campo zero contém um planejamento
-editável, separado dos cinco parágrafos. Gere ou escreva a sinopse e aprove-a.
-Depois gere individualmente Contextualização, Acontecimento, Recorrência,
-Contradição e Inconclusão. Cada pedido inclui o planejamento e **todos** os
-parágrafos anteriores em suas versões atuais. A intensidade dramática vai
-de 1 a 5, com padrão 3.
+Clique em **Começar história**. Há exatamente cinco abas: Introdução,
+Acontecimento, Recorrência, Contradição e Inconclusão. Cada aba contém um
+parágrafo; juntos, os cinco formam uma única história. As instruções da
+Introdução orientam o início, sem uma etapa de ideia inicial ou planejamento.
+Cada pedido seguinte inclui **todos** os parágrafos anteriores em suas versões
+atuais e as instruções do movimento. A intensidade dramática vai de 1 a 5,
+com padrão 3. As instruções linguísticas de encadeamento continuam presentes
+em cada geração.
 
-Cada campo tem instruções próprias e texto atual editável. **Salvar todas as
+Cada aba tem instruções próprias e texto atual editável. Trocar de aba mantém
+as edições ainda não salvas. **Salvar todas as
 edições** não consulta a API. Gerar, corrigir, validar e aprovar também salvam
-as edições dos outros campos antes da ação. Para regenerar um campo preenchido,
-marque a confirmação de substituição daquele campo. O texto original gerado
+as edições das outras abas antes da ação. Para regenerar um parágrafo preenchido,
+marque a confirmação de substituição naquela aba e use **Gerar novamente**.
+O texto original gerado
 e o histórico de alterações permanecem no JSON.
 
-Editar o planejamento ou um parágrafo invalida sua aprovação e sinaliza
+Editar um parágrafo invalida sua aprovação e sinaliza
 revisão nos movimentos seguintes, preservando os textos. Reveja a coerência
 e aprove-os novamente em ordem. Uma validação estrutural não atesta primeira
 pessoa, continuidade literária ou ausência de interpretações psicológicas;
@@ -33,26 +37,30 @@ e abreviações com ponto são recusados. A contagem é determinística, indepen
 do modelo; não substitui uma revisão linguística completa.
 
 A aprovação é explícita e é bloqueada quando há erros estruturais. A montagem
-exige os cinco movimentos aprovados e sem revisão pendente. **Montar narrativa**
+exige os cinco movimentos aprovados e sem revisão pendente. **Montar história**
 concatena seus textos exatos, separados por uma linha em branco, sem consultar
-a API. O TXT contém somente esses parágrafos; o JSON também contém planejamento,
-instruções, versões, validações, modelo e aprovações. O JSON pode ser baixado
+a API. O TXT contém somente esses parágrafos; o JSON também contém
+instruções, versões, validações, modelo e aprovações. Rascunhos antigos preservam
+a ideia inicial e o planejamento em `legado` no JSON, sem usá-los na geração.
+O JSON pode ser baixado
 durante a elaboração. Copiar usa a área de transferência ou seleciona o texto
 para cópia manual quando o navegador não permite acesso automático.
 
 ## Configurar a API
 
 O provedor padrão é **OpenRouter**, com modelo inicial
-`openai/gpt-4.1-mini`. O campo **Modelo para gerar o próximo campo** permite
-selecionar sugestões ou digitar qualquer identificador disponível na sua conta
-do OpenRouter. Entre as sugestões estão `openai/gpt-4.1`, para GPT-4.1, e
+`openai/gpt-4.1-mini`. O seletor **Modelo para a próxima geração** contém os
+modelos disponíveis no aplicativo. Para incluir outro, digite seu identificador
+em **Adicionar outro modelo** e clique em **Adicionar modelo**. Ele será
+selecionado e ficará salvo no catálogo local para outras histórias, sem consultar
+a API. Entre as opções iniciais estão `openai/gpt-4.1`, para GPT-4.1, e
 `openrouter/free`, que escolhe automaticamente um modelo gratuito disponível.
 Para escolher um modelo gratuito específico, copie seu identificador completo
 do [catálogo do OpenRouter](https://openrouter.ai/models), incluindo `:free`
 quando fizer parte do identificador.
 
 Configure a chave do OpenRouter uma única vez. Você pode trocar o modelo antes
-de gerar qualquer campo, usando a mesma chave. O modelo escolhido é salvo no
+de gerar qualquer movimento, usando a mesma chave. O modelo escolhido é salvo no
 rascunho e cada movimento mantém o modelo usado na sua geração; trocar de
 modelo não reescreve os parágrafos anteriores.
 
@@ -89,7 +97,8 @@ OpenRouter e pelo provedor do modelo escolhido.
 
 ## Persistência e verificação
 
-Os rascunhos ficam em `narrative_drafts`, no mesmo banco definido por
+Os rascunhos ficam em `narrative_drafts` e os modelos adicionados em
+`narrative_models`, no mesmo banco definido por
 `ANALISE_DB`, separado das tabelas de análise. Recarregar a página ou reiniciar
 o servidor preserva os dados salvos. Edições ainda não salvas recebem um aviso
 ao sair da página. O aplicativo usa o modelo de acesso local do Língua; não
@@ -102,4 +111,4 @@ adiciona autenticação de usuários nem deve ser exposto publicamente como serv
 Os testes do gerador simulam a API e verificam prompts, validação, encadeamento,
 edição, persistência, aprovação e exportação. Eles não gastam créditos e não
 certificam a qualidade de uma resposta real. Para testar o provedor real,
-configure a chave e gere primeiro apenas a ideia geral pela interface.
+configure a chave e gere primeiro apenas a Introdução pela interface.

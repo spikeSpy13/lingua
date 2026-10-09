@@ -2,6 +2,71 @@
   "use strict";
   const form = document.querySelector("[data-narrative-form]");
   if (!form) return;
+  const tabs = Array.from(form.querySelectorAll("[data-narrative-tab]"));
+  const panels = Array.from(form.querySelectorAll("[data-narrative-panel]"));
+  const activeInput = form.querySelector("[data-active-narrative-tab]");
+  const progress = form.querySelector("[data-narrative-progress]");
+
+  function activateTab(id, { updateUrl = true, focus = false } = {}) {
+    const selected = tabs.find((tab) => tab.dataset.narrativeTab === String(id));
+    if (!selected) return;
+    tabs.forEach((tab) => {
+      const active = tab === selected;
+      tab.setAttribute("aria-selected", String(active));
+      tab.tabIndex = active ? 0 : -1;
+    });
+    panels.forEach((panel) => { panel.hidden = panel.dataset.narrativePanel !== String(id); });
+    activeInput.value = String(id);
+    progress.textContent = `Movimento ${id} de 5 · ${selected.querySelector("span").textContent.split(" · ").slice(1).join(" · ")}`;
+    if (updateUrl) {
+      const url = new URL(window.location.href);
+      url.searchParams.set("aba", id);
+      window.history.replaceState(window.history.state, "", url);
+    }
+    if (focus) selected.focus();
+  }
+
+  tabs.forEach((tab, index) => {
+    tab.addEventListener("click", (event) => {
+      if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      activateTab(tab.dataset.narrativeTab);
+    });
+    tab.addEventListener("keydown", (event) => {
+      const targets = {
+        ArrowRight: (index + 1) % tabs.length,
+        ArrowLeft: (index - 1 + tabs.length) % tabs.length,
+        Home: 0,
+        End: tabs.length - 1,
+      };
+      if (event.key === " " || event.key === "Enter") {
+        event.preventDefault();
+        activateTab(tab.dataset.narrativeTab);
+      } else if (Object.hasOwn(targets, event.key)) {
+        event.preventDefault();
+        activateTab(tabs[targets[event.key]].dataset.narrativeTab, { focus: true });
+      }
+    });
+  });
+  window.addEventListener("popstate", () => {
+    activateTab(new URL(window.location.href).searchParams.get("aba") || "1", { updateUrl: false });
+  });
+
+  const provider = form.querySelector("#provedor");
+  const model = form.querySelector("#modelo");
+  const catalog = JSON.parse(form.querySelector("#narrative-model-catalog").textContent);
+  provider.addEventListener("change", () => {
+    const previous = model.value;
+    const choices = catalog[provider.value] || [];
+    model.replaceChildren(...choices.map((id) => {
+      const option = document.createElement("option");
+      option.value = id;
+      option.textContent = id === "openrouter/free" ? `${id} · gratuito` : id;
+      return option;
+    }));
+    if (choices.includes(previous)) model.value = previous;
+  });
+
   let submitting = false;
   let dirty = false;
   form.addEventListener("input", () => { dirty = true; });

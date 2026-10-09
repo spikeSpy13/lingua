@@ -15,14 +15,14 @@ class ErroNarrativa(ValueError):
 
 
 MOVIMENTOS = (
-    "Contextualização",
+    "Introdução",
     "Acontecimento",
     "Recorrência",
     "Contradição",
     "Inconclusão",
 )
 PROVEDORES = ("openrouter", "openai")
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "2.0.0"
 
 # A contagem considera palavras compostas e formas com apóstrofo uma palavra.
 # As letras acentuadas seguem as classes Unicode do Python; não há normalização.
@@ -55,13 +55,13 @@ def _texto(valor, nome):
 
 
 def _indice(indice):
-    if type(indice) is not int or not 0 <= indice <= 5:
-        raise ErroNarrativa("O campo deve estar entre 0 e 5.")
+    if type(indice) is not int or not 1 <= indice <= 5:
+        raise ErroNarrativa("O movimento deve estar entre 1 e 5.")
     return indice
 
 
 def _campo(estado, indice):
-    return estado["planejamento"] if indice == 0 else estado["movimentos"][indice - 1]
+    return estado["movimentos"][indice - 1]
 
 
 def _instante():
@@ -69,18 +69,9 @@ def _instante():
 
 
 def novo_estado():
-    """Cria seis campos independentes, sem narrativa nem aprovação inicial."""
+    """Cria cinco movimentos independentes, sem narrativa nem aprovação inicial."""
     return {
         "schema_version": SCHEMA_VERSION,
-        "ideia_inicial": "",
-        "planejamento": {
-            "instrucoes": "",
-            "texto_gerado": "",
-            "texto_atual": "",
-            "aprovado": False,
-            "modelo_utilizado": None,
-            "historico": [],
-        },
         "intensidade": 3,
         "provedor": "openrouter",
         "modelo": "openai/gpt-4.1-mini",
@@ -107,7 +98,7 @@ def novo_estado():
 def _conferir_estado(estado):
     if not isinstance(estado, dict) or estado.get("schema_version") != SCHEMA_VERSION:
         raise ErroNarrativa("Estado narrativo inválido ou versão incompatível.")
-    for nome in ("ideia_inicial", "provedor", "modelo", "narrativa_final"):
+    for nome in ("provedor", "modelo", "narrativa_final"):
         _texto(estado.get(nome), nome)
     if estado["provedor"] not in PROVEDORES:
         raise ErroNarrativa("Provedor deve ser OpenRouter ou OpenAI.")
@@ -117,12 +108,10 @@ def _conferir_estado(estado):
         raise ErroNarrativa("A intensidade dramática deve estar entre 1 e 5.")
     if not isinstance(estado.get("historico_alteracoes"), list):
         raise ErroNarrativa("Histórico de alterações inválido.")
-    if not isinstance(estado.get("planejamento"), dict):
-        raise ErroNarrativa("Planejamento narrativo inválido.")
     movimentos = estado.get("movimentos")
     if not isinstance(movimentos, list) or len(movimentos) != 5:
         raise ErroNarrativa("O estado deve conter exatamente cinco movimentos.")
-    for indice in range(6):
+    for indice in range(1, 6):
         campo = _campo(estado, indice)
         if not isinstance(campo, dict):
             raise ErroNarrativa(f"O campo {indice} é inválido.")
@@ -134,14 +123,46 @@ def _conferir_estado(estado):
             _texto(campo["modelo_utilizado"], "Modelo utilizado")
         if not isinstance(campo.get("historico"), list):
             raise ErroNarrativa(f"O histórico do campo {indice} é inválido.")
-        if indice:
-            if type(campo.get("id")) is not int or campo["id"] != indice:
-                raise ErroNarrativa("Identificação ou ordem dos movimentos inválida.")
-            _texto(campo.get("label"), "Nome do movimento")
-            if type(campo.get("revisao_coerencia")) is not bool:
-                raise ErroNarrativa(f"A revisão do movimento {indice} é inválida.")
-            if campo.get("validacao") is not None and not isinstance(campo["validacao"], dict):
-                raise ErroNarrativa(f"A validação do movimento {indice} é inválida.")
+        if type(campo.get("id")) is not int or campo["id"] != indice:
+            raise ErroNarrativa("Identificação ou ordem dos movimentos inválida.")
+        _texto(campo.get("label"), "Nome do movimento")
+        if type(campo.get("revisao_coerencia")) is not bool:
+            raise ErroNarrativa(f"A revisão do movimento {indice} é inválida.")
+        if campo.get("validacao") is not None and not isinstance(campo["validacao"], dict):
+            raise ErroNarrativa(f"A validação do movimento {indice} é inválida.")
+
+
+def migrar_estado(estado):
+    """Atualiza rascunhos antigos sem apagar textos, aprovações ou histórico.
+
+    A ideia e o planejamento do formato 1.0 ficam arquivados em ``legado``
+    somente para preservação e exportação. Não participam do fluxo narrativo,
+    dos prompts nem das condições de aprovação. A entrada nunca é modificada.
+    """
+    if not isinstance(estado, dict):
+        raise ErroNarrativa("Estado narrativo inválido ou versão incompatível.")
+    versao = estado.get("schema_version")
+    if versao == SCHEMA_VERSION:
+        _conferir_estado(estado)
+        return deepcopy(estado)
+    if versao != "1.0.0":
+        raise ErroNarrativa("Estado narrativo inválido ou versão incompatível.")
+    _texto(estado.get("ideia_inicial"), "Ideia inicial arquivada")
+    if not isinstance(estado.get("planejamento"), dict):
+        raise ErroNarrativa("Planejamento narrativo antigo inválido.")
+    novo = deepcopy(estado)
+    legado = {
+        "schema_version": "1.0.0",
+        "ideia_inicial": novo.pop("ideia_inicial"),
+        "planejamento": novo.pop("planejamento"),
+    }
+    if "legado" in novo:
+        legado["legado_anterior"] = novo["legado"]
+    novo["legado"] = legado
+    novo["schema_version"] = SCHEMA_VERSION
+    _conferir_estado(novo)
+    novo["movimentos"][0]["label"] = MOVIMENTOS[0]
+    return novo
 
 
 def _registrar(estado, indice, operacao, **dados):
@@ -170,8 +191,7 @@ def _editar_texto(estado, indice, texto):
     )
     campo["texto_atual"] = texto
     campo["aprovado"] = False
-    if indice:
-        campo["validacao"] = validar_movimento(texto)
+    campo["validacao"] = validar_movimento(texto)
     _invalidar_posteriores(estado, indice)
 
 
@@ -183,14 +203,14 @@ def salvar_campos(estado, campos):
     exatamente como estavam. Mudanças nas instruções, intensidade e modelo não
     modificam textos nem aprovações já obtidas.
     """
-    _conferir_estado(estado)
+    estado = migrar_estado(estado)
     if not isinstance(campos, dict):
         raise ErroNarrativa("Os campos devem ser um objeto JSON.")
-    permitidos = {"ideia_inicial", "intensidade", "provedor", "modelo", "planejamento", "movimentos"}
+    permitidos = {"intensidade", "provedor", "modelo", "movimentos"}
     if set(campos) - permitidos:
         raise ErroNarrativa("O envio contém campos que não podem ser editados.")
     novo = deepcopy(estado)
-    for nome in ("ideia_inicial", "provedor", "modelo"):
+    for nome in ("provedor", "modelo"):
         if nome not in campos:
             continue
         valor = _texto(campos[nome], nome)
@@ -202,9 +222,6 @@ def salvar_campos(estado, campos):
             continue
         _registrar(novo, None, "alteracao_configuracao", campo=nome, antes=novo[nome], depois=valor)
         novo[nome] = valor
-        if nome == "ideia_inicial":
-            novo["planejamento"]["aprovado"] = False
-            _invalidar_posteriores(novo, 0)
     if "intensidade" in campos:
         valor = campos["intensidade"]
         if type(valor) is not int or not 1 <= valor <= 5:
@@ -213,8 +230,6 @@ def salvar_campos(estado, campos):
             _registrar(novo, None, "alteracao_configuracao", campo="intensidade", antes=novo["intensidade"], depois=valor)
             novo["intensidade"] = valor
     patches = []
-    if "planejamento" in campos:
-        patches.append((0, campos["planejamento"]))
     if "movimentos" in campos:
         if not isinstance(campos["movimentos"], list):
             raise ErroNarrativa("Movimentos devem ser uma lista de campos editados.")
@@ -223,7 +238,7 @@ def salvar_campos(estado, campos):
             if not isinstance(patch, dict):
                 raise ErroNarrativa("Cada movimento editado deve ser um objeto.")
             indice = _indice(patch.get("id"))
-            if indice == 0 or indice in vistos:
+            if indice in vistos:
                 raise ErroNarrativa("Cada movimento deve ter um id único entre 1 e 5.")
             vistos.add(indice)
             patches.append((indice, {nome: valor for nome, valor in patch.items() if nome != "id"}))
@@ -346,9 +361,6 @@ def validar_movimento(texto):
 
 
 def _exigir_anteriores(estado, indice):
-    planejamento = estado["planejamento"]
-    if not planejamento["aprovado"] or not planejamento["texto_atual"].strip():
-        raise ErroNarrativa("Aprove a ideia geral antes de trabalhar nos movimentos.")
     for movimento in estado["movimentos"][:indice - 1]:
         if not movimento["aprovado"] or movimento["revisao_coerencia"]:
             raise ErroNarrativa(f"Revise e aprove o movimento {movimento['id']} antes de continuar.")
@@ -358,24 +370,19 @@ def _exigir_anteriores(estado, indice):
 
 def preparar_geracao(estado, indice, corrigir=False):
     """Retorna somente o contexto do alvo, com todas as versões anteriores atuais."""
-    _conferir_estado(estado)
+    estado = migrar_estado(estado)
     indice = _indice(indice)
     if type(corrigir) is not bool:
         raise ErroNarrativa("A opção de correção deve ser verdadeira ou falsa.")
-    if indice:
-        _exigir_anteriores(estado, indice)
-    elif not estado["ideia_inicial"].strip():
-        raise ErroNarrativa("Informe a ideia inicial para gerar o planejamento.")
+    _exigir_anteriores(estado, indice)
     campo = _campo(estado, indice)
-    if corrigir and (indice == 0 or not campo["texto_atual"].strip()):
+    if corrigir and not campo["texto_atual"].strip():
         raise ErroNarrativa("A correção requer um movimento narrativo já preenchido.")
     return {
         "indice": indice,
-        "ideia_inicial": estado["ideia_inicial"],
-        "planejamento": estado["planejamento"]["texto_atual"],
         "anteriores": [
             {"id": item["id"], "label": item["label"], "texto": item["texto_atual"]}
-            for item in estado["movimentos"][:max(0, indice - 1)]
+            for item in estado["movimentos"][:indice - 1]
         ],
         "instrucoes": campo["instrucoes"],
         "intensidade": estado["intensidade"],
@@ -386,6 +393,7 @@ def preparar_geracao(estado, indice, corrigir=False):
 
 def aplicar_geracao(estado, indice, texto, modelo):
     """Substitui somente o alvo, preservando versões anteriores no histórico."""
+    estado = migrar_estado(estado)
     preparar_geracao(estado, indice)
     _texto(texto, "Texto gerado")
     _texto(modelo, "Modelo utilizado")
@@ -403,20 +411,17 @@ def aplicar_geracao(estado, indice, texto, modelo):
     campo["texto_atual"] = texto
     campo["modelo_utilizado"] = modelo
     campo["aprovado"] = False
-    if indice:
-        campo["validacao"] = validar_movimento(texto)
-        # A nova geração usa o contexto atual; sua aprovação continua explícita.
-        campo["revisao_coerencia"] = False
+    campo["validacao"] = validar_movimento(texto)
+    # A nova geração usa o contexto atual; sua aprovação continua explícita.
+    campo["revisao_coerencia"] = False
     _invalidar_posteriores(novo, indice)
     return novo
 
 
 def validar(estado, indice):
     """Atualiza somente a validação do movimento solicitado, sem aprová-lo."""
-    _conferir_estado(estado)
+    estado = migrar_estado(estado)
     indice = _indice(indice)
-    if indice == 0:
-        raise ErroNarrativa("O planejamento não está sujeito às regras dos parágrafos.")
     novo = deepcopy(estado)
     campo = _campo(novo, indice)
     campo["validacao"] = validar_movimento(campo["texto_atual"])
@@ -428,30 +433,27 @@ def validar(estado, indice):
 
 def aprovar(estado, indice):
     """Aprova explicitamente a versão atual, inclusive sua coerência revisada."""
-    _conferir_estado(estado)
+    estado = migrar_estado(estado)
     indice = _indice(indice)
     campo = _campo(estado, indice)
     if not campo["texto_atual"].strip():
         raise ErroNarrativa("Preencha o campo antes de aprová-lo.")
-    validacao = None
-    if indice:
-        _exigir_anteriores(estado, indice)
-        validacao = validar_movimento(campo["texto_atual"])
-        if not validacao["valido"]:
-            raise ErroNarrativa("Não é possível aprovar este movimento. " + " ".join(validacao["erros"]))
+    _exigir_anteriores(estado, indice)
+    validacao = validar_movimento(campo["texto_atual"])
+    if not validacao["valido"]:
+        raise ErroNarrativa("Não é possível aprovar este movimento. " + " ".join(validacao["erros"]))
     novo = deepcopy(estado)
     campo = _campo(novo, indice)
     campo["aprovado"] = True
-    if indice:
-        campo["validacao"] = validacao
-        campo["revisao_coerencia"] = False
+    campo["validacao"] = validacao
+    campo["revisao_coerencia"] = False
     _registrar(novo, indice, "aprovacao", texto_atual=campo["texto_atual"])
     return novo
 
 
 def montar_narrativa(estado):
     """Concatena exatamente as cinco versões aprovadas, sem consultar um modelo."""
-    _conferir_estado(estado)
+    estado = migrar_estado(estado)
     _exigir_anteriores(estado, 6)
     novo = deepcopy(estado)
     novo["narrativa_final"] = "\n\n".join(item["texto_atual"] for item in novo["movimentos"])

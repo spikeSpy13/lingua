@@ -17,8 +17,6 @@ class PromptNarrativaTests(unittest.TestCase):
     def contexto(self, indice=1, **alteracoes):
         contexto = {
             "indice": indice,
-            "ideia_inicial": "Voltei à casa onde escondi uma carta.",
-            "planejamento": "Personagem Vera, casa antiga, carta mantida em segredo.",
             "anteriores": [{"id": numero, "label": "Anterior", "texto": f"Versão atual completa {numero}."}
                            for numero in range(1, indice)],
             "instrucoes": "Preserve a carta sem explicar o segredo.",
@@ -27,27 +25,31 @@ class PromptNarrativaTests(unittest.TestCase):
         contexto.update(alteracoes)
         return contexto
 
-    def test_planejamento_tem_todos_os_componentes_e_nao_gera_narrativa(self):
-        mensagens = api.construir_mensagens(**self.contexto(0, planejamento=""))
+    def test_introducao_nasce_das_instrucoes_sem_planejamento(self):
+        mensagens = api.construir_mensagens(**self.contexto(instrucoes="Voltei à casa onde escondi uma carta."))
         sistema = mensagens[0]["content"]
-        for componente in ("personagem principal", "contexto", "conflito central", "desenvolvimento previsto",
-                           "recorrência relevante", "contradição principal", "questão que permanecerá aberta"):
-            self.assertIn(componente, sistema)
-        self.assertIn("não se aplicam ao planejamento", sistema)
-        self.assertIn("Não escreva os cinco parágrafos", sistema)
-        self.assertNotIn(api._INSTRUCOES_LINGUISTICAS, sistema)
+        self.assertIn("correspondente a Introdução", sistema)
+        self.assertIn("instruções adicionais do primeiro movimento como ponto de partida", sistema)
+        self.assertEqual(sistema.count(api._INSTRUCOES_LINGUISTICAS), 1)
+        self.assertNotIn("planejamento", sistema)
+        self.assertNotIn("ideia geral", sistema)
         dados = json.loads(mensagens[1]["content"])
-        self.assertEqual(dados["campo"], 0)
+        self.assertEqual(dados["campo"], 1)
         self.assertEqual(dados["intensidade_dramatica"], 4)
+        self.assertEqual(dados["instrucoes_adicionais_deste_campo"], "Voltei à casa onde escondi uma carta.")
+        self.assertEqual(dados["todos_os_paragrafos_anteriores_atuais"], [])
+        self.assertNotIn("ideia_inicial", dados)
+        self.assertNotIn("planejamento_integral_atual", dados)
+        sem_instrucoes = api.construir_mensagens(**self.contexto(instrucoes=""))
+        self.assertIn("Se não houver instruções, invente um episódio ficcional", sem_instrucoes[0]["content"])
 
-    def test_todos_anteriores_atuais_e_planejamento_integral_sao_enviados(self):
-        contexto = self.contexto(5, planejamento="Planejamento editado pelo usuário.")
+    def test_todos_anteriores_atuais_e_instrucoes_editadas_sao_enviados(self):
+        contexto = self.contexto(5, instrucoes="Instruções editadas pelo usuário.")
         for paragrafo in contexto["anteriores"]:
             paragrafo["texto"] = f"Versão editada pelo usuário do parágrafo {paragrafo['id']}."
         antes = copy.deepcopy(contexto)
         mensagens = api.construir_mensagens(**contexto)
         dados = json.loads(mensagens[1]["content"])
-        self.assertEqual(dados["planejamento_integral_atual"], contexto["planejamento"])
         self.assertEqual([item["texto"] for item in dados["todos_os_paragrafos_anteriores_atuais"]],
                          [item["texto"] for item in contexto["anteriores"]])
         self.assertEqual(dados["campo"], 5)
@@ -78,7 +80,7 @@ class PromptNarrativaTests(unittest.TestCase):
         self.assertEqual(dados["texto_atual_a_corrigir"], contexto["texto_atual"])
         self.assertEqual(dados["erros_de_validacao"], contexto["erros"])
         self.assertEqual(len(dados["todos_os_paragrafos_anteriores_atuais"]), 2)
-        self.assertIn("Não altere o planejamento nem os parágrafos anteriores", mensagens[0]["content"])
+        self.assertIn("Não altere os parágrafos anteriores", mensagens[0]["content"])
         self.assertEqual(mensagens[0]["content"].count(api._INSTRUCOES_LINGUISTICAS), 1)
         self.assertEqual(contexto, antes)
 
@@ -94,8 +96,8 @@ class PromptNarrativaTests(unittest.TestCase):
         self.assertEqual(contexto, antes)
 
     def test_contexto_incompleto_e_parametros_invalidos_sao_rejeitados(self):
-        alteracoes = ({"indice": 6}, {"indice": True}, {"intensidade": 0}, {"intensidade": 6},
-                      {"intensidade": True}, {"planejamento": ""}, {"anteriores": ["extra"]},
+        alteracoes = ({"indice": 0}, {"indice": 6}, {"indice": True}, {"intensidade": 0}, {"intensidade": 6},
+                      {"intensidade": True}, {"anteriores": ["extra"]},
                       {"erros": ["erro"], "texto_atual": ""}, {"erros": [None]}, {"instrucoes": None})
         for valores in alteracoes:
             with self.subTest(valores=valores), self.assertRaises(api.ErroAPINarrativa):
@@ -124,8 +126,7 @@ class ClienteNarrativaTests(unittest.TestCase):
 
     def gerar(self, **extras):
         valores = {
-            "indice": 1, "ideia_inicial": self.TEXTO_PRIVADO, "planejamento": "Plano atual aprovado.",
-            "anteriores": [], "instrucoes": "Minha instrução adicional.", "intensidade": 3,
+            "indice": 1, "anteriores": [], "instrucoes": self.TEXTO_PRIVADO, "intensidade": 3,
         }
         valores.update(extras)
         return api.gerar_texto(**valores)
@@ -141,7 +142,8 @@ class ClienteNarrativaTests(unittest.TestCase):
         return capturado.exception
 
     def test_openrouter_padrao_um_pedido_com_chave_no_header_e_sem_stream(self):
-        self.assertEqual(self.gerar(), "Um texto completo.")
+        anteriores = [f"Parágrafo {indice} editado pelo usuário." for indice in range(1, 5)]
+        self.assertEqual(self.gerar(indice=5, anteriores=anteriores), "Um texto completo.")
         self.cliente.open.assert_called_once()
         pedido = self.cliente.open.call_args.args[0]
         corpo = json.loads(pedido.data)
@@ -153,6 +155,12 @@ class ClienteNarrativaTests(unittest.TestCase):
         self.assertEqual(corpo["n"], 1)
         self.assertNotIn(self.CHAVE_FICTICIA, pedido.data.decode())
         self.assertIn(self.TEXTO_PRIVADO, corpo["messages"][1]["content"])
+        contexto = json.loads(corpo["messages"][1]["content"])
+        self.assertEqual(contexto["campo"], 5)
+        self.assertEqual([item["texto"] for item in contexto["todos_os_paragrafos_anteriores_atuais"]], anteriores)
+        self.assertIn("Produza somente o parágrafo 5", corpo["messages"][0]["content"])
+        self.assertNotIn("ideia_inicial", contexto)
+        self.assertNotIn("planejamento_integral_atual", contexto)
         self.assertEqual(self.cliente.open.call_args.kwargs["timeout"], api.TIMEOUT_SEGUNDOS)
         self.resposta.read.assert_called_once_with(api.LIMITE_RESPOSTA_BYTES + 1)
 
@@ -244,7 +252,10 @@ class ClienteNarrativaTests(unittest.TestCase):
                 self.verificar_erro_seguro(self.gerar)
 
     def test_contexto_grande_e_incompleto_nao_faz_pedido(self):
-        self.verificar_erro_seguro(lambda: self.gerar(ideia_inicial="x" * api.LIMITE_PEDIDO_BYTES), "excedeu")
+        self.verificar_erro_seguro(lambda: self.gerar(instrucoes="x" * api.LIMITE_PEDIDO_BYTES), "excedeu")
+        self.verificar_erro_seguro(lambda: self.gerar(indice=0), "entre 1 e 5")
+        self.verificar_erro_seguro(lambda: self.gerar(ideia_inicial="campo removido"), "contexto")
+        self.verificar_erro_seguro(lambda: self.gerar(planejamento="campo removido"), "contexto")
         self.verificar_erro_seguro(lambda: api.gerar_texto(indice=1), "contexto")
         self.cliente.open.assert_not_called()
 

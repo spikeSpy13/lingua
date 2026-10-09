@@ -6,6 +6,7 @@ from narrativas import (
     ErroNarrativa,
     aplicar_geracao,
     aprovar,
+    migrar_estado,
     montar_narrativa,
     novo_estado,
     preparar_geracao,
@@ -154,15 +155,24 @@ class ValidacaoNarrativaTests(unittest.TestCase):
 
 
 class EstadoNarrativaTests(unittest.TestCase):
-    def planejamento_aprovado(self):
-        estado = salvar_campos(novo_estado(), {
-            "ideia_inicial": "Uma irmã retorna à antiga casa da família.",
-            "planejamento": {"texto_atual": "Eu reencontro minha irmã e nossa antiga casa. Ficam perguntas abertas."},
-        })
-        return aprovar(estado, 0)
+    def estado_antigo(self, estado=None):
+        antigo = copy.deepcopy(novo_estado() if estado is None else estado)
+        antigo["schema_version"] = "1.0.0"
+        antigo["ideia_inicial"] = "  Uma irmã retorna à antiga casa da família.\n"
+        antigo["planejamento"] = {
+            "instrucoes": "Preserve as perguntas em aberto.",
+            "texto_gerado": "Sinopse originalmente gerada: reencontro; conflito...",
+            "texto_atual": " \nSinopse editada: reencontro; conflito...\n\nQuestão aberta.  ",
+            "aprovado": False,
+            "modelo_utilizado": "modelo-do-planejamento",
+            "historico": [{"indice": 0, "operacao": "edicao_manual", "texto_anterior": "Outra sinopse."}],
+        }
+        antigo["movimentos"][0]["label"] = "Contextualização"
+        antigo["historico_alteracoes"].append({"indice": 0, "operacao": "edicao_manual", "texto_anterior": "Outra sinopse."})
+        return antigo
 
     def cinco_aprovados(self):
-        estado = self.planejamento_aprovado()
+        estado = novo_estado()
         for indice in range(1, 6):
             texto = PARAGRAFO.replace("medo", f"lembrança{indice}")
             estado = aplicar_geracao(estado, indice, texto, "modelo-teste")
@@ -171,17 +181,22 @@ class EstadoNarrativaTests(unittest.TestCase):
 
     def test_estado_padrao_serializavel_e_independente(self):
         estado = novo_estado()
+        self.assertEqual(estado["schema_version"], "2.0.0")
         self.assertEqual(estado["intensidade"], 3)
         self.assertEqual(estado["provedor"], "openrouter")
         self.assertEqual(estado["modelo"], "openai/gpt-4.1-mini")
         self.assertEqual([item["id"] for item in estado["movimentos"]], [1, 2, 3, 4, 5])
+        self.assertEqual(estado["movimentos"][0]["label"], "Introdução")
+        self.assertNotIn("ideia_inicial", estado)
+        self.assertNotIn("planejamento", estado)
+        self.assertNotIn("legado", estado)
         self.assertEqual(json.loads(json.dumps(estado, ensure_ascii=False)), estado)
         estado["movimentos"][0]["historico"].append({"manual": True})
         self.assertEqual(estado["movimentos"][1]["historico"], [])
         self.assertEqual(novo_estado()["movimentos"][0]["historico"], [])
 
     def test_operacoes_nao_mutam_entrada(self):
-        estado = self.planejamento_aprovado()
+        estado = novo_estado()
         snapshot = copy.deepcopy(estado)
         editado = salvar_campos(estado, {"movimentos": [{"id": 1, "texto_atual": PARAGRAFO}]})
         self.assertEqual(estado, snapshot)
@@ -225,26 +240,25 @@ class EstadoNarrativaTests(unittest.TestCase):
         atualizado = salvar_campos(estado, {"movimentos": [{"id": 1, "texto_atual": estado["movimentos"][0]["texto_atual"]}]})
         self.assertEqual(atualizado, estado)
 
-    def test_alteracao_planejamento_ou_ideia_exige_novas_aprovacoes(self):
+    def test_ideia_planejamento_e_legado_nao_sao_campos_editaveis(self):
         for campos in (
             {"ideia_inicial": "Uma nova ideia."},
             {"planejamento": {"texto_atual": "Um planejamento inteiramente revisado."}},
+            {"legado": {"ideia_inicial": "Não sobrescrever o arquivo antigo."}},
         ):
             with self.subTest(campos=campos):
                 estado = self.cinco_aprovados()
-                atualizado = salvar_campos(estado, campos)
-                self.assertFalse(atualizado["planejamento"]["aprovado"])
-                self.assertTrue(all(item["revisao_coerencia"] for item in atualizado["movimentos"]))
-                self.assertTrue(all(not item["aprovado"] for item in atualizado["movimentos"]))
-                self.assertEqual([item["texto_atual"] for item in atualizado["movimentos"]], [item["texto_atual"] for item in estado["movimentos"]])
+                snapshot = copy.deepcopy(estado)
+                with self.assertRaises(ErroNarrativa):
+                    salvar_campos(estado, campos)
+                self.assertEqual(estado, snapshot)
 
     def test_configuracoes_e_instrucoes_nao_revogam_aprovacoes(self):
         estado = montar_narrativa(self.cinco_aprovados())
         atualizado = salvar_campos(estado, {
             "intensidade": 5, "provedor": "openai", "modelo": "gpt-4.1-mini",
-            "planejamento": {"instrucoes": "Outra direção para uma futura versão."},
+            "movimentos": [{"id": 1, "instrucoes": "Outra direção para uma futura versão."}],
         })
-        self.assertTrue(atualizado["planejamento"]["aprovado"])
         self.assertTrue(all(item["aprovado"] for item in atualizado["movimentos"]))
         self.assertEqual(atualizado["narrativa_final"], estado["narrativa_final"])
         self.assertEqual(atualizado["movimentos"][0]["modelo_utilizado"], "modelo-teste")
@@ -258,10 +272,9 @@ class EstadoNarrativaTests(unittest.TestCase):
         self.assertTrue(atualizado["movimentos"][3]["revisao_coerencia"])
         self.assertTrue(all(not item["aprovado"] for item in atualizado["movimentos"]))
 
-    def test_geracao_precisa_planejamento_e_anteriores_aprovados(self):
-        with self.assertRaises(ErroNarrativa):
-            preparar_geracao(novo_estado(), 1)
-        estado = self.planejamento_aprovado()
+    def test_geracao_comeca_na_introducao_e_exige_anteriores_aprovados(self):
+        estado = novo_estado()
+        self.assertEqual(preparar_geracao(estado, 1)["indice"], 1)
         with self.assertRaises(ErroNarrativa):
             preparar_geracao(estado, 2)
         estado = aplicar_geracao(estado, 1, PARAGRAFO, "modelo-teste")
@@ -277,20 +290,26 @@ class EstadoNarrativaTests(unittest.TestCase):
         for indice in range(1, 5):
             estado = aprovar(estado, indice)
         contexto = preparar_geracao(estado, 5)
-        self.assertEqual(contexto["planejamento"], estado["planejamento"]["texto_atual"])
+        self.assertEqual(set(contexto), {"indice", "anteriores", "instrucoes", "intensidade", "texto_atual", "erros"})
         self.assertEqual([item["id"] for item in contexto["anteriores"]], [1, 2, 3, 4])
         self.assertEqual(contexto["anteriores"][0]["texto"], anterior)
         self.assertEqual([item["texto"] for item in contexto["anteriores"]], [item["texto_atual"] for item in estado["movimentos"][:4]])
         self.assertIsNone(contexto["erros"])
 
-    def test_planejamento_precisa_ideia_e_nao_e_validado_como_paragrafo(self):
-        with self.assertRaises(ErroNarrativa):
-            preparar_geracao(novo_estado(), 0)
-        estado = salvar_campos(novo_estado(), {"ideia_inicial": "Ideia: reencontro; conflito..."})
-        estado = aplicar_geracao(estado, 0, "Sinopse: reencontro; conflito...\n\nQuestão aberta.", "modelo-teste")
-        self.assertFalse(estado["planejamento"]["aprovado"])
-        self.assertTrue(aprovar(estado, 0)["planejamento"]["aprovado"])
-        self.assertEqual(preparar_geracao(estado, 0)["anteriores"], [])
+    def test_introducao_pode_ser_gerada_sem_semente_ou_instrucoes(self):
+        estado = novo_estado()
+        contexto = preparar_geracao(estado, 1)
+        self.assertEqual(contexto, {
+            "indice": 1, "anteriores": [], "instrucoes": "", "intensidade": 3,
+            "texto_atual": "", "erros": None,
+        })
+        gerado = aplicar_geracao(estado, 1, PARAGRAFO, "modelo-teste")
+        self.assertEqual(gerado["movimentos"][0]["texto_atual"], PARAGRAFO)
+        self.assertFalse(gerado["movimentos"][0]["aprovado"])
+        self.assertTrue(gerado["movimentos"][0]["validacao"]["valido"])
+        aprovado = aprovar(gerado, 1)
+        self.assertTrue(aprovado["movimentos"][0]["aprovado"])
+        self.assertEqual(preparar_geracao(aprovado, 2)["anteriores"][0]["texto"], PARAGRAFO)
 
     def test_regeneracao_preserva_edicao_manual_no_historico_e_demais_campos(self):
         estado = self.cinco_aprovados()
@@ -312,7 +331,7 @@ class EstadoNarrativaTests(unittest.TestCase):
             self.assertTrue(atualizado["movimentos"][indice]["revisao_coerencia"])
 
     def test_geracao_invalida_e_preservada_para_corrigir_sem_aprovacao(self):
-        estado = aplicar_geracao(self.planejamento_aprovado(), 1, "Um texto curto.", "modelo-teste")
+        estado = aplicar_geracao(novo_estado(), 1, "Um texto curto.", "modelo-teste")
         self.assertFalse(estado["movimentos"][0]["validacao"]["valido"])
         self.assertEqual(estado["movimentos"][0]["texto_atual"], "Um texto curto.")
         with self.assertRaises(ErroNarrativa):
@@ -323,7 +342,7 @@ class EstadoNarrativaTests(unittest.TestCase):
         self.assertTrue(all(isinstance(erro, str) for erro in contexto["erros"]))
 
     def test_validar_nao_aprova_e_preserva_texto(self):
-        estado = salvar_campos(self.planejamento_aprovado(), {"movimentos": [{"id": 1, "texto_atual": PARAGRAFO}]})
+        estado = salvar_campos(novo_estado(), {"movimentos": [{"id": 1, "texto_atual": PARAGRAFO}]})
         atualizado = validar(estado, 1)
         self.assertTrue(atualizado["movimentos"][0]["validacao"]["valido"])
         self.assertFalse(atualizado["movimentos"][0]["aprovado"])
@@ -343,8 +362,8 @@ class EstadoNarrativaTests(unittest.TestCase):
         self.assertTrue(estado["movimentos"][1]["aprovado"])
         self.assertTrue(estado["movimentos"][2]["revisao_coerencia"])
 
-    def test_montagem_preserva_textos_exatos_e_exclui_planejamento(self):
-        estado = self.planejamento_aprovado()
+    def test_montagem_preserva_textos_exatos(self):
+        estado = novo_estado()
         for indice in range(1, 6):
             texto = " \n" + PARAGRAFO.replace("medo", f"lembrança{indice}") + " \n"
             estado = salvar_campos(estado, {"movimentos": [{"id": indice, "texto_atual": texto}]})
@@ -352,7 +371,6 @@ class EstadoNarrativaTests(unittest.TestCase):
         esperado = "\n\n".join(item["texto_atual"] for item in estado["movimentos"])
         resultado = montar_narrativa(estado)
         self.assertEqual(resultado["narrativa_final"], esperado)
-        self.assertNotIn(estado["planejamento"]["texto_atual"], resultado["narrativa_final"])
         self.assertTrue(resultado["narrativa_final"].startswith(" \n"))
         self.assertTrue(resultado["narrativa_final"].endswith(" \n"))
         exportado = json.loads(json.dumps(resultado, ensure_ascii=False))
@@ -364,13 +382,121 @@ class EstadoNarrativaTests(unittest.TestCase):
             lambda estado: estado["movimentos"][3].update(aprovado=False),
             lambda estado: estado["movimentos"][3].update(revisao_coerencia=True),
             lambda estado: estado["movimentos"][3].update(texto_atual="Texto inválido."),
-            lambda estado: estado["planejamento"].update(aprovado=False),
         ):
             with self.subTest(modificar=modificar):
                 estado = self.cinco_aprovados()
                 modificar(estado)
                 with self.assertRaises(ErroNarrativa):
                     montar_narrativa(estado)
+
+    def test_migracao_preserva_textos_aprovacoes_configuracoes_e_historicos(self):
+        completo = montar_narrativa(self.cinco_aprovados())
+        completo = salvar_campos(completo, {"intensidade": 5, "modelo": "outro-modelo"})
+        antigo = self.estado_antigo(completo)
+        antigo["movimentos"][1]["historico"].append({
+            "operacao": "edicao_manual", "texto_anterior": "  Um texto de outra versão.\r\n",
+        })
+        snapshot = copy.deepcopy(antigo)
+        migrado = migrar_estado(antigo)
+        self.assertEqual(antigo, snapshot)
+        self.assertEqual(migrado["schema_version"], "2.0.0")
+        self.assertNotIn("ideia_inicial", migrado)
+        self.assertNotIn("planejamento", migrado)
+        self.assertEqual(migrado["movimentos"][0]["label"], "Introdução")
+        for anterior, atual in zip(antigo["movimentos"], migrado["movimentos"]):
+            esperado = copy.deepcopy(anterior)
+            if esperado["id"] == 1:
+                esperado["label"] = "Introdução"
+            self.assertEqual(atual, esperado)
+        for nome in ("intensidade", "provedor", "modelo", "narrativa_final", "historico_alteracoes"):
+            self.assertEqual(migrado[nome], antigo[nome])
+        self.assertEqual(migrado["legado"], {
+            "schema_version": "1.0.0",
+            "ideia_inicial": antigo["ideia_inicial"],
+            "planejamento": antigo["planejamento"],
+        })
+        exportado = json.loads(json.dumps(migrado, ensure_ascii=False))
+        self.assertEqual(exportado, migrado)
+        self.assertEqual(exportado["narrativa_final"], antigo["narrativa_final"])
+        self.assertNotIn(antigo["planejamento"]["texto_atual"], exportado["narrativa_final"])
+
+    def test_migracao_e_idempotente_e_nao_compartilha_dados_mutaveis(self):
+        antigo = self.estado_antigo(self.cinco_aprovados())
+        migrado = migrar_estado(antigo)
+        remigrado = migrar_estado(migrado)
+        self.assertEqual(remigrado, migrado)
+        remigrado["legado"]["planejamento"]["historico"].append({"nova": True})
+        remigrado["movimentos"][0]["historico"].append({"nova": True})
+        self.assertNotEqual(remigrado["legado"], migrado["legado"])
+        self.assertNotEqual(remigrado["movimentos"][0]["historico"], migrado["movimentos"][0]["historico"])
+        self.assertEqual(migrado["legado"]["planejamento"], antigo["planejamento"])
+        self.assertNotIn("legado", antigo)
+        self.assertEqual(migrar_estado(novo_estado()), novo_estado())
+
+    def test_rascunho_antigo_sem_planejamento_aprovado_inicia_introducao(self):
+        antigo = self.estado_antigo()
+        antigo["ideia_inicial"] = ""
+        antigo["planejamento"]["texto_atual"] = ""
+        antigo["planejamento"]["aprovado"] = False
+        contexto = preparar_geracao(antigo, 1)
+        self.assertEqual(contexto, preparar_geracao(novo_estado(), 1))
+        self.assertNotIn("ideia_inicial", contexto)
+        self.assertNotIn("planejamento", contexto)
+        self.assertNotIn("legado", contexto)
+        gerado = aplicar_geracao(antigo, 1, PARAGRAFO, "modelo-teste")
+        self.assertTrue(aprovar(gerado, 1)["movimentos"][0]["aprovado"])
+        self.assertEqual(gerado["legado"]["planejamento"], antigo["planejamento"])
+
+    def test_todas_operacoes_de_estado_aceitam_rascunhos_antigos(self):
+        completo = montar_narrativa(self.cinco_aprovados())
+        antigo = self.estado_antigo(completo)
+        snapshot = copy.deepcopy(antigo)
+        for operacao in (
+            lambda: salvar_campos(antigo, {"modelo": "novo-modelo"}),
+            lambda: aplicar_geracao(antigo, 1, PARAGRAFO, "novo-modelo"),
+            lambda: validar(antigo, 1),
+            lambda: aprovar(antigo, 1),
+            lambda: montar_narrativa(antigo),
+        ):
+            with self.subTest(operacao=operacao):
+                atualizado = operacao()
+                self.assertEqual(atualizado["schema_version"], "2.0.0")
+                self.assertEqual(atualizado["legado"]["planejamento"], antigo["planejamento"])
+                self.assertEqual(atualizado["movimentos"][4]["texto_atual"], antigo["movimentos"][4]["texto_atual"])
+                self.assertNotIn("ideia_inicial", atualizado)
+                self.assertNotIn("planejamento", atualizado)
+                self.assertEqual(antigo, snapshot)
+        contexto = preparar_geracao(antigo, 5)
+        self.assertEqual(len(contexto["anteriores"]), 4)
+        self.assertNotIn("legado", contexto)
+        self.assertEqual(montar_narrativa(antigo)["narrativa_final"], antigo["narrativa_final"])
+
+    def test_rascunho_migrado_mantem_pendencia_coerencia_e_aprovacao(self):
+        estado = self.cinco_aprovados()
+        estado = salvar_campos(estado, {"movimentos": [{"id": 1, "texto_atual": PARAGRAFO}]})
+        antigo = self.estado_antigo(estado)
+        migrado = migrar_estado(antigo)
+        self.assertFalse(migrado["movimentos"][0]["aprovado"])
+        self.assertTrue(all(item["revisao_coerencia"] for item in migrado["movimentos"][1:]))
+        with self.assertRaises(ErroNarrativa):
+            preparar_geracao(antigo, 5)
+        with self.assertRaises(ErroNarrativa):
+            montar_narrativa(antigo)
+        for indice in range(1, 6):
+            migrado = aprovar(migrado, indice)
+        self.assertTrue(montar_narrativa(migrado)["narrativa_final"])
+
+    def test_migracao_recusa_estado_antigo_incompleto_e_versao_desconhecida(self):
+        for estado in (None, [], {}, {"schema_version": "3.0.0"}):
+            with self.subTest(estado=estado):
+                with self.assertRaises(ErroNarrativa):
+                    migrar_estado(estado)
+        for remover in ("movimentos", "ideia_inicial", "planejamento"):
+            with self.subTest(remover=remover):
+                estado = self.estado_antigo()
+                del estado[remover]
+                with self.assertRaises(ErroNarrativa):
+                    migrar_estado(estado)
 
     def test_recusa_campos_protegidos_indices_duplicados_e_configuracoes_invalidas(self):
         for campos in (
@@ -397,18 +523,22 @@ class EstadoNarrativaTests(unittest.TestCase):
                 self.assertEqual(estado, snapshot)
 
     def test_recusa_indices_invalidos_estados_incompletos_e_operacoes_vazias(self):
-        for indice in (None, False, True, -1, 6, "1", 1.0):
+        for indice in (None, False, True, -1, 0, 6, "1", 1.0):
             with self.subTest(indice=indice):
                 with self.assertRaises(ErroNarrativa):
                     preparar_geracao(novo_estado(), indice)
                 with self.assertRaises(ErroNarrativa):
                     aprovar(novo_estado(), indice)
-        for estado in (None, {}, [], {"schema_version": "2.0.0"}):
+                with self.assertRaises(ErroNarrativa):
+                    validar(novo_estado(), indice)
+                with self.assertRaises(ErroNarrativa):
+                    aplicar_geracao(novo_estado(), indice, PARAGRAFO, "modelo-teste")
+        for estado in (None, {}, [], {"schema_version": "3.0.0"}):
             with self.subTest(estado=estado):
                 with self.assertRaises(ErroNarrativa):
                     salvar_campos(estado, {})
         estado = novo_estado()
-        del estado["planejamento"]
+        del estado["movimentos"]
         with self.assertRaises(ErroNarrativa):
             salvar_campos(estado, {})
         with self.assertRaises(ErroNarrativa):
@@ -416,12 +546,12 @@ class EstadoNarrativaTests(unittest.TestCase):
         with self.assertRaises(ErroNarrativa):
             validar(novo_estado(), 0)
         with self.assertRaises(ErroNarrativa):
-            preparar_geracao(self.planejamento_aprovado(), 1, corrigir=True)
+            preparar_geracao(novo_estado(), 1, corrigir=True)
         with self.assertRaises(ErroNarrativa):
-            preparar_geracao(self.planejamento_aprovado(), 1, corrigir="true")
+            preparar_geracao(novo_estado(), 1, corrigir="true")
         for texto, modelo in ((" ", "modelo"), (PARAGRAFO, ""), (None, "modelo")):
             with self.assertRaises(ErroNarrativa):
-                aplicar_geracao(self.planejamento_aprovado(), 1, texto, modelo)
+                aplicar_geracao(novo_estado(), 1, texto, modelo)
 
 
 if __name__ == "__main__":

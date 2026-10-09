@@ -20,7 +20,7 @@
         <div class="intro">
           <p class="eyebrow">Geração progressiva</p>
           <h1>Sua narrativa, parágrafo por parágrafo.</h1>
-          <p class="intro-description">Planeje uma narrativa ficcional em primeira pessoa. Gere, edite e aprove cada movimento antes de avançar.</p>
+          <p class="intro-description">Cinco movimentos formam uma única história em primeira pessoa. Comece pela introdução e gere, edite e aprove um parágrafo em cada aba.</p>
         </div>
         {% if error %}<p class="notice notice-error" role="alert">{{ error }}</p>{% endif %}
         {% if notice %}<p class="notice notice-success" role="status">{{ notice }}</p>{% endif %}
@@ -31,9 +31,7 @@
         <section class="editor">
           <h2>Começar uma narrativa</h2>
           <form method="post" action="{{ url_for('narrativas.criar') }}">
-            <label for="ideia-inicial">Sua ideia inicial</label>
-            <textarea id="ideia-inicial" name="ideia_inicial" rows="4" maxlength="12000" placeholder="Uma frase ou uma descrição do episódio que você quer narrar."></textarea>
-            <div class="form-footer"><p>O planejamento fica separado dos cinco parágrafos finais.</p><button type="submit">Começar narrativa →</button></div>
+            <div class="form-footer"><p>As instruções da primeira aba orientam o início. Cada movimento seguinte continua a história já escrita.</p><button type="submit">Começar história →</button></div>
           </form>
         </section>
         {% else %}
@@ -41,6 +39,8 @@
         <form method="post" action="{{ url_for('narrativas.acao', identifier=draft.id) }}" data-narrative-form>
           <input type="hidden" name="csrf_token" value="{{ draft.csrf_token }}">
           <input type="hidden" name="revision" value="{{ draft.revision }}">
+          <input type="hidden" name="aba" value="{{ active_tab }}" data-active-narrative-tab>
+          <script type="application/json" id="narrative-model-catalog">{{ model_catalog|tojson }}</script>
           <section class="editor narrative-settings">
             <h2>Configuração da narrativa</h2>
             <div class="context-options">
@@ -50,13 +50,12 @@
                   <option value="openai"{% if narrative.provedor == 'openai' %} selected{% endif %}>OpenAI</option>
                 </select>
               </label>
-              <label for="modelo">Modelo para gerar o próximo campo
-                <input id="modelo" name="modelo" value="{{ narrative.modelo }}" list="modelos-narrativa" required maxlength="200" placeholder="Escolha ou digite o identificador" aria-describedby="modelo-help">
-                <datalist id="modelos-narrativa">
-                  <option value="openai/gpt-4.1-mini">OpenRouter · OpenAI GPT-4.1 Mini</option>
-                  <option value="openai/gpt-4.1">OpenRouter · OpenAI GPT-4.1</option>
-                  <option value="openrouter/free">OpenRouter · seleção automática de modelo gratuito</option>
-                </datalist>
+              <label for="modelo">Modelo para a próxima geração
+                <select id="modelo" name="modelo" required aria-describedby="modelo-help">
+                  {% for model in model_catalog[narrative.provedor] %}
+                  <option value="{{ model }}"{% if model == narrative.modelo %} selected{% endif %}>{{ model }}{% if model == 'openrouter/free' %} · gratuito{% endif %}</option>
+                  {% endfor %}
+                </select>
               </label>
               <label for="intensidade">Intensidade dramática
                 <select id="intensidade" name="intensidade">
@@ -66,34 +65,27 @@
                 </select>
               </label>
             </div>
-            <p id="modelo-help" class="option-help">Escolha uma sugestão ou digite qualquer identificador do <a href="https://openrouter.ai/models" target="_blank" rel="noopener noreferrer">catálogo do OpenRouter</a>. A mesma chave serve para todos os modelos do OpenRouter. Você pode trocar antes de cada geração; os parágrafos anteriores permanecem salvos. Se escolher o provedor OpenAI diretamente, use uma chave da OpenAI e seu identificador de modelo, como <code>gpt-4.1-mini</code>.</p>
-            <p class="option-help">Cada geração envia ao provedor a ideia geral, as instruções e todos os parágrafos anteriores atuais. Uma solicitação gera apenas um campo e pode ter custo na API.</p>
+            <div class="narrative-add-model">
+              <label for="novo_modelo">Adicionar outro modelo</label>
+              <div class="narrative-model-entry"><input id="novo_modelo" name="novo_modelo" maxlength="200" placeholder="provedor/nome-do-modelo ou identificador:free" aria-describedby="modelo-help"><button type="submit" name="acao" value="adicionar_modelo">Adicionar modelo</button></div>
+            </div>
+            <p id="modelo-help" class="option-help">Copie o identificador do <a href="https://openrouter.ai/models" target="_blank" rel="noopener noreferrer">catálogo do OpenRouter</a> e clique em Adicionar modelo. Ele ficará salvo no seletor para esta e outras histórias. A mesma chave serve para todos os modelos do OpenRouter. Para OpenAI diretamente, use a chave e o identificador do próprio provedor.</p>
+            <p class="option-help">Cada geração envia as instruções do movimento e todos os parágrafos anteriores atuais. O modelo escolhido vale para a próxima geração; os parágrafos já escritos permanecem salvos.</p>
             <button type="submit" name="acao" value="salvar">Salvar todas as edições</button>
           </section>
-          <section class="editor narrative-field" id="movimento-0">
-            <div class="editor-heading"><h2>0 · Ideia geral</h2><p>Defina personagem, contexto, conflito, recorrência, contradição e a questão que permanecerá aberta.</p></div>
-            <label for="ideia_inicial">Ideia inicial</label>
-            <textarea id="ideia_inicial" name="ideia_inicial" rows="3" maxlength="12000">
-{{ narrative.ideia_inicial }}</textarea>
-            <label for="instrucoes_0">Instruções para o planejamento</label>
-            <textarea id="instrucoes_0" name="instrucoes_0" rows="2" maxlength="12000">
-{{ narrative.planejamento.instrucoes }}</textarea>
-            <label for="texto_0">Planejamento atual · editável</label>
-            <textarea id="texto_0" name="texto_0" rows="6" maxlength="20000">
-{{ narrative.planejamento.texto_atual }}</textarea>
-            {% if narrative.planejamento.texto_gerado %}<details><summary>Último planejamento gerado</summary><pre class="narrative-source">
-{{ narrative.planejamento.texto_gerado }}</pre></details>{% endif %}
-            <p class="narrative-status">{{ 'Planejamento aprovado' if narrative.planejamento.aprovado else 'Aguardando aprovação do planejamento' }}</p>
-            <label class="technical-option"><input type="checkbox" name="substituir_0"> Permitir substituir somente o planejamento atual ao gerar outra versão</label>
-            <div class="narrative-actions"><button type="submit" name="acao" value="gerar:0" data-generates>Gerar ideia geral</button><button type="submit" name="acao" value="aprovar:0">Aprovar planejamento</button></div>
-          </section>
+          <nav class="narrative-tabs" role="tablist" aria-label="Cinco movimentos da história">
+            {% for movement in narrative.movimentos %}
+            <a id="tab-movimento-{{ movement.id }}" class="narrative-tab" role="tab" href="{{ url_for('narrativas.editar', identifier=draft.id, aba=movement.id) }}" aria-controls="movimento-{{ movement.id }}" aria-selected="{{ 'true' if active_tab == movement.id else 'false' }}" tabindex="{{ '0' if active_tab == movement.id else '-1' }}" data-narrative-tab="{{ movement.id }}"><span>{{ movement.id }} · {{ movement.label }}</span><small>{{ 'Revisar continuidade' if movement.revisao_coerencia else ('Aprovado' if movement.aprovado else 'Em elaboração') }}</small></a>
+            {% endfor %}
+          </nav>
+          <p class="workflow-progress" data-narrative-progress aria-live="polite">Movimento {{ active_tab }} de 5 · {{ narrative.movimentos[active_tab - 1].label }}</p>
           {% for movement in narrative.movimentos %}
-          <section class="editor narrative-field" id="movimento-{{ movement.id }}">
+          <section class="editor narrative-field" id="movimento-{{ movement.id }}" role="tabpanel" aria-labelledby="tab-movimento-{{ movement.id }}" tabindex="0" data-narrative-panel="{{ movement.id }}"{% if active_tab != movement.id %} hidden{% endif %}>
             <div class="editor-heading"><h2>
 {{ movement.id }} · {{ movement.label }}</h2><p>Um parágrafo, cinco períodos e de 20 a 36 palavras por período. Máximo de 180 palavras no parágrafo.</p></div>
             {% if movement.revisao_coerencia %}<p class="notice notice-error">Um campo anterior foi alterado. Revise a continuidade deste movimento e aprove-o novamente.</p>{% endif %}
             <label for="instrucoes_{{ movement.id }}">Instruções deste movimento</label>
-            <textarea id="instrucoes_{{ movement.id }}" name="instrucoes_{{ movement.id }}" rows="2" maxlength="12000">
+            <textarea id="instrucoes_{{ movement.id }}" name="instrucoes_{{ movement.id }}" rows="3" maxlength="12000" placeholder="{{ 'Descreva personagens, situação e tom desejados para começar a história.' if movement.id == 1 else 'Diga como este movimento deve continuar os parágrafos anteriores.' }}">
 {{ movement.instrucoes }}</textarea>
             <label for="texto_{{ movement.id }}">Parágrafo atual · editável</label>
             <textarea id="texto_{{ movement.id }}" name="texto_{{ movement.id }}" rows="6" maxlength="20000">
@@ -110,7 +102,7 @@
             {% endif %}
             <label class="technical-option"><input type="checkbox" name="substituir_{{ movement.id }}"> Permitir substituir somente este parágrafo ao gerar ou corrigir</label>
             <div class="narrative-actions">
-              <button type="submit" name="acao" value="gerar:{{ movement.id }}" data-generates>{{ 'Gerar introdução' if movement.id == 1 else 'Gerar ' + movement.label|lower }}</button>
+              <button type="submit" name="acao" value="gerar:{{ movement.id }}" data-generates>{{ 'Gerar novamente' if movement.texto_atual else ('Gerar introdução' if movement.id == 1 else 'Gerar ' + movement.label|lower) }}</button>
               <button type="submit" name="acao" value="corrigir:{{ movement.id }}" data-generates>Corrigir este parágrafo pela API</button>
               <button type="submit" name="acao" value="validar:{{ movement.id }}">Validar novamente</button>
               <button type="submit" name="acao" value="aprovar:{{ movement.id }}">Aprovar movimento</button>
@@ -118,9 +110,9 @@
           </section>
           {% endfor %}
           <section class="editor" id="narrativa-final">
-            <h2>Narrativa final</h2>
-            <p>Depois de aprovar os cinco movimentos, reúna os parágrafos exatamente como estão, sem nova geração.</p>
-            <button type="submit" name="acao" value="montar">Montar narrativa</button>
+            <h2>História completa</h2>
+            <p>{{ narrative.movimentos|selectattr('aprovado')|list|length }} de 5 movimentos aprovados. Depois de aprovar os cinco, reúna os parágrafos exatamente como estão.</p>
+            <button type="submit" name="acao" value="montar">Montar história</button>
             {% if narrative.narrativa_final %}
             <label for="texto-final">Cinco parágrafos aprovados</label>
             <textarea id="texto-final" rows="16" readonly>
@@ -128,13 +120,13 @@
             <div class="narrative-actions"><button type="button" data-copy-narrative>Copiar narrativa</button><a href="{{ url_for('narrativas.exportar', identifier=draft.id, format='txt') }}">Baixar TXT</a></div>
             <p data-copy-status role="status"></p>
             {% endif %}
-            <p><a href="{{ url_for('narrativas.exportar', identifier=draft.id, format='json') }}">Baixar JSON do planejamento, movimentos e histórico</a></p>
+            <p><a href="{{ url_for('narrativas.exportar', identifier=draft.id, format='json') }}">Baixar JSON dos movimentos e histórico</a></p>
           </section>
           <p data-submitting-status role="status" aria-live="polite"></p>
         </form>
         {% endif %}
         {% if drafts %}
-        <details class="editor narrative-history"{% if not draft %} open{% endif %}><summary>Narrativas salvas neste ambiente</summary><ul>{% for item in drafts %}<li><a href="{{ url_for('narrativas.editar', identifier=item.id) }}">{{ item.idea }}</a> <time>{{ item.updated_at|horario_brasilia }}</time></li>{% endfor %}</ul></details>
+        <details class="editor narrative-history"{% if not draft %} open{% endif %}><summary>Histórias salvas neste ambiente</summary><ul>{% for item in drafts %}<li><a href="{{ url_for('narrativas.editar', identifier=item.id) }}">{{ item.title }}</a> <time>{{ item.updated_at|horario_brasilia }}</time></li>{% endfor %}</ul></details>
         {% endif %}
         {% if draft %}<p><a href="{{ url_for('narrativas.inicio') }}">Começar outra narrativa</a></p>{% endif %}
       </main>
