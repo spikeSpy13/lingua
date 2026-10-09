@@ -22,7 +22,29 @@ MOVIMENTOS = (
     "Inconclusão",
 )
 PROVEDORES = ("openrouter", "openai")
-SCHEMA_VERSION = "2.0.0"
+SCHEMA_VERSION = "3.0.0"
+COMPOSICAO_OPCOES = {
+    "encadeamento": {
+        "progressivo": "Progressivo",
+        "causal": "Causal",
+        "temporal": "Temporal",
+        "retomada": "Retomada",
+    },
+    "sintaxe": {
+        "afirmacao_negacao": "Afirmação e negação",
+        "contraste": "Contraste",
+        "paralelismo": "Paralelismo",
+        "inversao": "Inversão",
+        "subordinacao": "Subordinação",
+    },
+    "ritmo": {
+        "regular": "Regular",
+        "crescente": "Crescente",
+        "decrescente": "Decrescente",
+        "alternado": "Alternado",
+        "irregular": "Irregular",
+    },
+}
 
 # A contagem considera palavras compostas e formas com apóstrofo uma palavra.
 # As letras acentuadas seguem as classes Unicode do Python; não há normalização.
@@ -68,6 +90,32 @@ def _instante():
     return datetime.now(timezone.utc).isoformat()
 
 
+def composicao_padrao():
+    """Cria três controles desativados e independentes para um movimento."""
+    return {
+        "encadeamento": {"ativo": False, "tipo": "progressivo", "instrucoes": ""},
+        "sintaxe": {"ativo": False, "tipo": "afirmacao_negacao", "instrucoes": ""},
+        "ritmo": {"ativo": False, "tipo": "regular", "instrucoes": ""},
+    }
+
+
+def conferir_composicao(valor):
+    """Valida os três controles completos e devolve uma cópia independente."""
+    if not isinstance(valor, dict) or set(valor) != set(COMPOSICAO_OPCOES):
+        raise ErroNarrativa("A composição deve conter somente encadeamento, sintaxe e ritmo.")
+    for nome, opcoes in COMPOSICAO_OPCOES.items():
+        controle = valor[nome]
+        if not isinstance(controle, dict) or set(controle) != {"ativo", "tipo", "instrucoes"}:
+            raise ErroNarrativa(f"O controle {nome} deve conter ativo, tipo e instruções.")
+        if type(controle["ativo"]) is not bool:
+            raise ErroNarrativa(f"A ativação do controle {nome} deve ser verdadeira ou falsa.")
+        tipo = _texto(controle["tipo"], f"Tipo de {nome}")
+        if tipo not in opcoes:
+            raise ErroNarrativa(f"Tipo desconhecido para o controle {nome}.")
+        _texto(controle["instrucoes"], f"Instruções de {nome}")
+    return deepcopy(valor)
+
+
 def novo_estado():
     """Cria cinco movimentos independentes, sem narrativa nem aprovação inicial."""
     return {
@@ -80,6 +128,7 @@ def novo_estado():
                 "id": indice,
                 "label": label,
                 "instrucoes": "",
+                "composicao": composicao_padrao(),
                 "texto_gerado": "",
                 "texto_atual": "",
                 "validacao": None,
@@ -130,6 +179,7 @@ def _conferir_estado(estado):
             raise ErroNarrativa(f"A revisão do movimento {indice} é inválida.")
         if campo.get("validacao") is not None and not isinstance(campo["validacao"], dict):
             raise ErroNarrativa(f"A validação do movimento {indice} é inválida.")
+        conferir_composicao(campo.get("composicao"))
 
 
 def migrar_estado(estado):
@@ -137,7 +187,10 @@ def migrar_estado(estado):
 
     A ideia e o planejamento do formato 1.0 ficam arquivados em ``legado``
     somente para preservação e exportação. Não participam do fluxo narrativo,
-    dos prompts nem das condições de aprovação. A entrada nunca é modificada.
+    dos prompts nem das condições de aprovação. Os formatos 1.0 e 2.0 recebem
+    controles independentes e suas validações salvas são recalculadas sem os
+    antigos limites de palavras. Aprovações e texto final são preservados.
+    A entrada nunca é modificada.
     """
     if not isinstance(estado, dict):
         raise ErroNarrativa("Estado narrativo inválido ou versão incompatível.")
@@ -145,23 +198,35 @@ def migrar_estado(estado):
     if versao == SCHEMA_VERSION:
         _conferir_estado(estado)
         return deepcopy(estado)
-    if versao != "1.0.0":
+    if versao not in ("1.0.0", "2.0.0"):
         raise ErroNarrativa("Estado narrativo inválido ou versão incompatível.")
-    _texto(estado.get("ideia_inicial"), "Ideia inicial arquivada")
-    if not isinstance(estado.get("planejamento"), dict):
-        raise ErroNarrativa("Planejamento narrativo antigo inválido.")
     novo = deepcopy(estado)
-    legado = {
-        "schema_version": "1.0.0",
-        "ideia_inicial": novo.pop("ideia_inicial"),
-        "planejamento": novo.pop("planejamento"),
-    }
-    if "legado" in novo:
-        legado["legado_anterior"] = novo["legado"]
-    novo["legado"] = legado
+    if versao == "1.0.0":
+        _texto(novo.get("ideia_inicial"), "Ideia inicial arquivada")
+        if not isinstance(novo.get("planejamento"), dict):
+            raise ErroNarrativa("Planejamento narrativo antigo inválido.")
+        legado = {
+            "schema_version": "1.0.0",
+            "ideia_inicial": novo.pop("ideia_inicial"),
+            "planejamento": novo.pop("planejamento"),
+        }
+        if "legado" in novo:
+            legado["legado_anterior"] = novo["legado"]
+        novo["legado"] = legado
+    movimentos = novo.get("movimentos")
+    if not isinstance(movimentos, list) or len(movimentos) != 5:
+        raise ErroNarrativa("O estado deve conter exatamente cinco movimentos.")
+    for movimento in movimentos:
+        if not isinstance(movimento, dict):
+            raise ErroNarrativa("Movimento narrativo antigo inválido.")
+        if "composicao" not in movimento:
+            movimento["composicao"] = composicao_padrao()
     novo["schema_version"] = SCHEMA_VERSION
     _conferir_estado(novo)
     novo["movimentos"][0]["label"] = MOVIMENTOS[0]
+    for movimento in movimentos:
+        if movimento.get("validacao") is not None:
+            movimento["validacao"] = validar_movimento(movimento["texto_atual"])
     return novo
 
 
@@ -199,9 +264,10 @@ def salvar_campos(estado, campos):
     """Salva somente os campos enviados, sem aceitar aprovação ou texto gerado.
 
     ``movimentos`` é uma lista parcial de objetos com ``id`` e os campos
-    ``instrucoes`` e/ou ``texto_atual``. Elementos e chaves ausentes permanecem
-    exatamente como estavam. Mudanças nas instruções, intensidade e modelo não
-    modificam textos nem aprovações já obtidas.
+    ``instrucoes``, ``texto_atual`` e/ou ``composicao``. A composição enviada deve
+    conter os três controles completos. Elementos e chaves ausentes permanecem
+    exatamente como estavam. Mudanças nas instruções, composição, intensidade
+    e modelo não modificam textos nem aprovações já obtidas.
     """
     estado = migrar_estado(estado)
     if not isinstance(campos, dict):
@@ -245,16 +311,38 @@ def salvar_campos(estado, campos):
     # Ordem narrativa garante que editar vários campos juntos preserva os sinais
     # de revisão criados por mudanças em um campo anterior.
     for indice, patch in sorted(patches, key=lambda item: item[0]):
-        if not isinstance(patch, dict) or set(patch) - {"instrucoes", "texto_atual"}:
-            raise ErroNarrativa("Edite somente instruções e versão atual de cada campo.")
+        if not isinstance(patch, dict) or set(patch) - {"instrucoes", "texto_atual", "composicao"}:
+            raise ErroNarrativa("Edite somente instruções, composição e versão atual de cada campo.")
         campo = _campo(novo, indice)
         if "instrucoes" in patch:
             valor = _texto(patch["instrucoes"], "Instruções")
             if valor != campo["instrucoes"]:
                 _registrar(novo, indice, "alteracao_instrucoes", antes=campo["instrucoes"], depois=valor)
                 campo["instrucoes"] = valor
+        if "composicao" in patch:
+            valor = conferir_composicao(patch["composicao"])
+            if valor != campo["composicao"]:
+                _registrar(novo, indice, "alteracao_composicao", antes=campo["composicao"], depois=valor)
+                campo["composicao"] = valor
         if "texto_atual" in patch:
             _editar_texto(novo, indice, _texto(patch["texto_atual"], "Texto atual"))
+    return novo
+
+
+def herdar_composicao(estado, indice):
+    """Copia as escolhas do movimento precedente, sem criar um vínculo futuro."""
+    estado = migrar_estado(estado)
+    indice = _indice(indice)
+    if indice == 1:
+        raise ErroNarrativa("A introdução não tem um movimento anterior para herdar.")
+    novo = deepcopy(estado)
+    campo = _campo(novo, indice)
+    valor = conferir_composicao(_campo(novo, indice - 1)["composicao"])
+    _registrar(
+        novo, indice, "heranca_composicao", movimento_origem=indice - 1,
+        antes=campo["composicao"], depois=valor,
+    )
+    campo["composicao"] = valor
     return novo
 
 
@@ -334,12 +422,8 @@ def validar_movimento(texto):
     if len(periodos) != 5:
         erros.append(f"Esperados exatamente 5 períodos; encontrado(s) {len(periodos)}.")
     for indice, periodo in enumerate(periodos, 1):
-        if not 20 <= periodo["palavras"] <= 36:
-            erros.append(f"Período {indice}: {periodo['palavras']} palavras; permitido de 20 a 36.")
         if not periodo["terminado"]:
             erros.append(f"Período {indice}: falta pontuação de encerramento (. ! ou ?).")
-    if total > 180:
-        erros.append(f"Parágrafo com {total} palavras; máximo permitido de 180.")
     nomes = {
         "dois_pontos": "dois-pontos", "ponto_e_virgula": "ponto e vírgula",
         "reticencias": "reticências", "travessao": "travessão",
@@ -385,6 +469,7 @@ def preparar_geracao(estado, indice, corrigir=False):
             for item in estado["movimentos"][:indice - 1]
         ],
         "instrucoes": campo["instrucoes"],
+        "composicao": conferir_composicao(campo["composicao"]),
         "intensidade": estado["intensidade"],
         "texto_atual": campo["texto_atual"],
         "erros": validar_movimento(campo["texto_atual"])["erros"] if corrigir else None,

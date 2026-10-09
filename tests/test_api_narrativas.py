@@ -11,6 +11,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 import api_narrativas as api
+from narrativas import composicao_padrao
 
 
 class PromptNarrativaTests(unittest.TestCase):
@@ -63,16 +64,88 @@ class PromptNarrativaTests(unittest.TestCase):
                 sistema = api.construir_mensagens(**self.contexto(indice))[0]["content"]
                 self.assertEqual(sistema.count(api._INSTRUCOES_LINGUISTICAS), 1)
                 for requisito in (f"somente o parágrafo {indice}", funcao, "exatamente um parágrafo",
-                                  "exatamente cinco períodos", "entre 20 e 36 palavras", "no máximo 180 palavras",
+                                  "exatamente cinco períodos", "A extensão dos períodos é livre",
                                   "primeira pessoa", "português brasileiro", "dois-pontos", "ponto e vírgula",
                                   "reticências", "travessões de diálogo", "abreviações com ponto",
                                   "terminologia psicanalítica", "diagnósticos", "explicações psicológicas prontas",
                                   "todos os parágrafos anteriores", "Nunca reescreva", "intensidade dramática solicitada é 4"):
                     self.assertIn(requisito, sistema)
+                self.assertNotIn("entre 20 e 36 palavras", sistema)
+                self.assertNotIn("180 palavras", sistema)
+
+    def test_todas_opcoes_funcionam_sem_ativar_os_outros_controles(self):
+        opcoes = {
+            "encadeamento": {
+                "progressivo": "informações avançarem progressivamente",
+                "causal": "relações de causa e consequência",
+                "temporal": "relações cronológicas claras",
+                "retomada": "Retome informações, objetos ou personagens",
+            },
+            "sintaxe": {
+                "afirmacao_negacao": "restrições, ressalvas, oposições ou recusas",
+                "contraste": "contrastes sintáticos",
+                "paralelismo": "construções sintáticas paralelas",
+                "inversao": "inversões da ordem habitual",
+                "subordinacao": "orações subordinadas",
+            },
+            "ritmo": {
+                "regular": "sem exigir contagem idêntica de palavras",
+                "crescente": "progressivamente mais longos",
+                "decrescente": "progressivamente mais curtos",
+                "alternado": "Alterne períodos relativamente longos e curtos",
+                "irregular": "sem padrão fixo nem alternância obrigatória",
+            },
+        }
+        for nome, tipos in opcoes.items():
+            for tipo, trecho in tipos.items():
+                with self.subTest(controle=nome, tipo=tipo):
+                    composicao = composicao_padrao()
+                    composicao[nome].update(ativo=True, tipo=tipo)
+                    mensagens = api.construir_mensagens(**self.contexto(composicao=composicao))
+                    sistema = mensagens[0]["content"]
+                    dados = json.loads(mensagens[1]["content"])
+                    self.assertIn(trecho, sistema)
+                    self.assertEqual(list(dados["controles_de_composicao_ativos"]), [nome])
+                    self.assertEqual(dados["controles_de_composicao_ativos"][nome]["tipo"], tipo)
+                    for outro in set(opcoes) - {nome}:
+                        self.assertNotIn(f"{outro.capitalize()} ativo", sistema)
+                    if tipo == "afirmacao_negacao":
+                        self.assertIn("Evite repetições mecânicas", sistema)
+
+    def test_desligados_ignoram_tipos_e_instrucoes_sem_modificar_configuracao(self):
+        composicao = composicao_padrao()
+        for nome, tipo in (("encadeamento", "retomada"), ("sintaxe", "inversao"), ("ritmo", "irregular")):
+            composicao[nome].update(tipo=tipo, instrucoes=f"Instrução desativada de {nome}.")
+        antes = copy.deepcopy(composicao)
+        padrao = api.construir_mensagens(**self.contexto())
+        desligados = api.construir_mensagens(**self.contexto(composicao=composicao))
+        self.assertEqual(desligados, padrao)
+        self.assertNotIn("controles_de_composicao_ativos", json.loads(desligados[1]["content"]))
+        self.assertEqual(composicao, antes)
+
+    def test_customizacoes_complementam_controles_ativos_e_regras_gerais(self):
+        composicao = composicao_padrao()
+        for nome in composicao:
+            composicao[nome].update(ativo=True, instrucoes=f"Instruções particulares de {nome}.\nPreserve minha escolha.")
+        antes = copy.deepcopy(composicao)
+        mensagens = api.construir_mensagens(**self.contexto(4, composicao=composicao))
+        sistema = mensagens[0]["content"]
+        dados = json.loads(mensagens[1]["content"])
+        self.assertIn("sem substituir as regras gerais da narrativa", sistema)
+        self.assertIn("Os cinco movimentos formam uma única história", sistema)
+        self.assertIn("Preserve a correção gramatical", sistema)
+        self.assertIn("exatamente cinco períodos", sistema)
+        self.assertIn("primeira pessoa", sistema)
+        for nome, controle in composicao.items():
+            self.assertEqual(dados["controles_de_composicao_ativos"][nome]["instrucoes_personalizadas"], controle["instrucoes"])
+            self.assertEqual(sistema.count(f"{nome.capitalize()} ativo"), 1)
+        self.assertEqual(composicao, antes)
 
     def test_correcao_inclui_alvo_erros_e_preserva_contexto(self):
+        composicao = composicao_padrao()
+        composicao["ritmo"].update(ativo=True, tipo="alternado")
         contexto = self.contexto(3, texto_atual="Parágrafo que precisa de correção.",
-                                 erros=["Há um período em vez de cinco."])
+                                 erros=["Há um período em vez de cinco."], composicao=composicao)
         antes = copy.deepcopy(contexto)
         mensagens = api.construir_mensagens(**contexto)
         dados = json.loads(mensagens[1]["content"])
@@ -82,10 +155,13 @@ class PromptNarrativaTests(unittest.TestCase):
         self.assertEqual(len(dados["todos_os_paragrafos_anteriores_atuais"]), 2)
         self.assertIn("Não altere os parágrafos anteriores", mensagens[0]["content"])
         self.assertEqual(mensagens[0]["content"].count(api._INSTRUCOES_LINGUISTICAS), 1)
+        self.assertIn("Alterne períodos relativamente longos e curtos", mensagens[0]["content"])
         self.assertEqual(contexto, antes)
 
     def test_regeneracao_inclui_versao_atual_sem_tratar_como_correcao(self):
-        contexto = self.contexto(texto_atual="Minha versão editada.")
+        composicao = composicao_padrao()
+        composicao["sintaxe"].update(ativo=True, tipo="subordinacao")
+        contexto = self.contexto(texto_atual="Minha versão editada.", composicao=composicao)
         antes = copy.deepcopy(contexto)
         mensagens = api.construir_mensagens(**contexto)
         dados = json.loads(mensagens[1]["content"])
@@ -93,12 +169,14 @@ class PromptNarrativaTests(unittest.TestCase):
         self.assertEqual(dados["versao_atual_do_campo_para_regeneracao"], "Minha versão editada.")
         self.assertNotIn("texto_atual_a_corrigir", dados)
         self.assertEqual(mensagens[0]["content"].count(api._INSTRUCOES_LINGUISTICAS), 1)
+        self.assertIn("Use orações subordinadas", mensagens[0]["content"])
         self.assertEqual(contexto, antes)
 
     def test_contexto_incompleto_e_parametros_invalidos_sao_rejeitados(self):
         alteracoes = ({"indice": 0}, {"indice": 6}, {"indice": True}, {"intensidade": 0}, {"intensidade": 6},
                       {"intensidade": True}, {"anteriores": ["extra"]},
-                      {"erros": ["erro"], "texto_atual": ""}, {"erros": [None]}, {"instrucoes": None})
+                      {"erros": ["erro"], "texto_atual": ""}, {"erros": [None]}, {"instrucoes": None},
+                      {"composicao": {}}, {"composicao": "inválida"})
         for valores in alteracoes:
             with self.subTest(valores=valores), self.assertRaises(api.ErroAPINarrativa):
                 api.construir_mensagens(**self.contexto(**valores))
@@ -153,6 +231,7 @@ class ClienteNarrativaTests(unittest.TestCase):
         self.assertEqual(corpo["model"], "openai/gpt-4.1-mini")
         self.assertFalse(corpo["stream"])
         self.assertEqual(corpo["n"], 1)
+        self.assertNotIn("max_tokens", corpo)
         self.assertNotIn(self.CHAVE_FICTICIA, pedido.data.decode())
         self.assertIn(self.TEXTO_PRIVADO, corpo["messages"][1]["content"])
         contexto = json.loads(corpo["messages"][1]["content"])
@@ -163,6 +242,25 @@ class ClienteNarrativaTests(unittest.TestCase):
         self.assertNotIn("planejamento_integral_atual", contexto)
         self.assertEqual(self.cliente.open.call_args.kwargs["timeout"], api.TIMEOUT_SEGUNDOS)
         self.resposta.read.assert_called_once_with(api.LIMITE_RESPOSTA_BYTES + 1)
+
+    def test_messages_api_sao_os_mesmos_da_previa_com_controles_ativos(self):
+        composicao = composicao_padrao()
+        composicao["encadeamento"].update(ativo=True, tipo="causal", instrucoes="Explique a relação dos acontecimentos.")
+        composicao["sintaxe"].update(ativo=True, tipo="contraste", instrucoes="Contraste o que eu digo e faço.")
+        composicao["ritmo"].update(ativo=True, tipo="crescente", instrucoes="Amplie a cadência no final.")
+        for edicao in ({}, {"texto_atual": "Texto em sua versão editada."},
+                       {"texto_atual": "Texto em sua versão editada.", "erros": ["Há menos de cinco períodos."]}):
+            with self.subTest(edicao=edicao):
+                contexto = {
+                    "indice": 2, "anteriores": ["Primeiro parágrafo editado."], "instrucoes": self.TEXTO_PRIVADO,
+                    "intensidade": 3, "composicao": composicao, **edicao,
+                }
+                previa = api.construir_mensagens(**contexto)
+                self.cliente.open.reset_mock()
+                self.gerar(**contexto)
+                self.cliente.open.assert_called_once()
+                corpo = json.loads(self.cliente.open.call_args.args[0].data)
+                self.assertEqual(corpo["messages"], previa)
 
     def test_openai_tem_endpoint_fixo_e_modelo_escolhido(self):
         self.gerar(provedor="openai", modelo="gpt-4.1-mini")

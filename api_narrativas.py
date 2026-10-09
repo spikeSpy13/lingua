@@ -33,27 +33,38 @@ _MOVIMENTOS = {
     5: ("Inconclusão", "Encerre o episódio preservando uma questão significativa sem resolução, mesmo se o final for emocionalmente intenso."),
 }
 
-# Camada comum de organização textual para os cinco movimentos narrativos.
+# Continuidade da história, independente dos controles de composição.
 _INSTRUCOES_LINGUISTICAS = (
-    "Organize o parágrafo como uma unidade textual com as seguintes diretrizes linguísticas. "
-    "Progressão temática: cada período deve desenvolver as informações anteriores e pode introduzir informações novas, "
-    "mantendo relações temáticas reconhecíveis; evite frases independentes que apenas compartilham um assunto. "
-    "Coesão referencial: mantenha referências compreensíveis a personagens, acontecimentos, objetos e lugares, "
-    "usando naturalmente pronomes com referentes identificáveis, retomadas lexicais, expressões semanticamente relacionadas "
-    "e referências a informações anteriores; evite repetições artificiais e não imponha a repetição de palavras específicas. "
-    "Continuidade temporal: preserve relações temporais compreensíveis e a consistência dos tempos verbais, "
-    "permitindo mudanças justificadas por lembranças, comparações ou acontecimentos, sem contradições cronológicas involuntárias. "
-    "Unidade estilística: mantenha a mesma voz narrativa nos cinco movimentos, em português brasileiro cotidiano e natural, "
-    "como uma pessoa relatando sua experiência em primeira pessoa a alguém de confiança; evite mudanças injustificadas de registro, "
-    "linguagem excessivamente literária e explicações psicológicas ou teóricas. "
-    "Relações entre períodos: encadeie os acontecimentos e as informações de modo que cada período tenha uma relação compreensível "
-    "com os demais e contribua para o desenvolvimento do parágrafo. "
-    "Coerência entre parágrafos: o primeiro movimento estabelece os elementos iniciais; do segundo em diante, "
-    "relacione o novo parágrafo às instruções do movimento atual e à história já escrita, considerando todos os parágrafos anteriores "
-    "em suas versões atuais, inclusive as edições do usuário. "
-    "Preserve a identidade dos personagens, os acontecimentos e conflitos já estabelecidos e a continuidade temporal, "
-    "sem repetir desnecessariamente informações. Essas diretrizes complementam a função específica de cada movimento. "
+    "Os cinco movimentos formam uma única história, com continuidade dos acontecimentos e da perspectiva narrativa. "
+    "Preserve a identidade dos personagens, os acontecimentos e conflitos já estabelecidos, as referências compreensíveis "
+    "e a continuidade temporal, considerando todos os parágrafos anteriores em suas versões atuais, inclusive as edições do usuário. "
+    "Permita mudanças temporais justificadas por lembranças, comparações ou acontecimentos, evitando contradições cronológicas involuntárias. "
+    "Preserve a correção gramatical e a coerência do pensamento do personagem, mesmo quando a composição formal variar entre movimentos. "
 )
+
+_REGRAS_COMPOSICAO = {
+    "encadeamento": {
+        "progressivo": "Faça as informações avançarem progressivamente a partir do que já foi apresentado, mantendo relações temáticas reconhecíveis entre os períodos.",
+        "causal": "Evidencie relações de causa e consequência entre acontecimentos e pensamentos, sem inventar causas incompatíveis com a história.",
+        "temporal": "Organize os períodos por relações cronológicas claras, sinalizando mudanças de tempo e a sequência dos acontecimentos.",
+        "retomada": "Retome informações, objetos ou personagens já apresentados por referências identificáveis, pronomes e retomadas lexicais naturais, sem impor palavras repetidas.",
+    },
+    "sintaxe": {
+        "afirmacao_negacao": "Associe afirmações a restrições, ressalvas, oposições ou recusas pertinentes ao pensamento do narrador. Evite repetições mecânicas e preserve a correção gramatical e a coerência do pensamento.",
+        "contraste": "Construa contrastes sintáticos entre ideias, percepções ou ações, com oposições compreensíveis e sem repetir mecanicamente um mesmo conectivo.",
+        "paralelismo": "Use construções sintáticas paralelas em passagens relacionadas, com variação lexical e sem repetição mecânica de uma fórmula.",
+        "inversao": "Use inversões da ordem habitual dos termos para dar relevo a elementos da experiência, preservando a correção gramatical e a clareza das referências.",
+        "subordinacao": "Use orações subordinadas para articular relações de tempo, causa, condição ou concessão entre as ideias, preservando a clareza e a correção gramatical.",
+    },
+    "ritmo": {
+        "regular": "Adote períodos de extensão e cadência semelhantes, sem exigir contagem idêntica de palavras. Considere a extensão das orações, a pontuação permitida e a distribuição das pausas.",
+        "crescente": "Faça os períodos ficarem progressivamente mais longos ao longo do parágrafo, ampliando as orações e a cadência sem comprometer a clareza.",
+        "decrescente": "Faça os períodos ficarem progressivamente mais curtos ao longo do parágrafo, reduzindo as orações e concentrando a cadência sem perder o sentido.",
+        "alternado": "Alterne períodos relativamente longos e curtos, produzindo um contraste de cadência também pela distribuição das pausas e das orações.",
+        "irregular": "Varie a extensão dos períodos, as orações e as pausas sem padrão fixo nem alternância obrigatória, preservando a correção gramatical e a coerência do pensamento.",
+    },
+}
+_NOMES_CONTROLES = {"encadeamento": "Encadeamento", "sintaxe": "Sintaxe", "ritmo": "Ritmo"}
 
 
 class ErroAPINarrativa(ValueError):
@@ -87,11 +98,15 @@ def status_configuracao(provedor: str = PROVEDOR_PADRAO) -> dict:
 def construir_mensagens(
     *, indice: int, anteriores: list, instrucoes: str, intensidade: int,
     texto_atual: str = "", erros: list[str] | None = None,
+    composicao: dict | None = None,
 ) -> list[dict]:
     """Inclua as instruções e todas as versões atuais anteriores no pedido.
 
     ``erros`` distingue uma correção individual de uma nova geração.
+    Controles desativados não acrescentam regras nem dados ao prompt.
     """
+    from narrativas import ErroNarrativa, composicao_padrao, conferir_composicao
+
     if type(indice) is not int or indice not in range(1, 6):
         raise ErroAPINarrativa("O movimento narrativo deve estar entre 1 e 5.")
     if type(intensidade) is not int or intensidade not in range(1, 6):
@@ -111,6 +126,10 @@ def construir_mensagens(
         raise ErroAPINarrativa("A lista de erros para correção é inválida.")
     if erros is not None and not texto_atual.strip():
         raise ErroAPINarrativa("Informe o texto atual do campo para solicitar uma correção.")
+    try:
+        composicao = conferir_composicao(composicao_padrao() if composicao is None else composicao)
+    except ErroNarrativa:
+        raise ErroAPINarrativa("Os controles de composição são inválidos.") from None
 
     sistema = "Você constrói uma única narrativa ficcional confessional em português brasileiro, progressivamente. "
     titulo, funcao = _MOVIMENTOS[indice]
@@ -119,7 +138,7 @@ def construir_mensagens(
         "Respeite todos os parágrafos anteriores em suas versões atuais. "
         "Nunca reescreva ou inclua qualquer parágrafo anterior. Nunca gere a narrativa inteira. "
         "Responda com exatamente um parágrafo, contendo exatamente cinco períodos. "
-        "Cada período deve conter entre 20 e 36 palavras, inclusive; o parágrafo deve ter no máximo 180 palavras. "
+        "A extensão dos períodos é livre e deve atender às escolhas narrativas e aos controles de composição ativados. "
         "Escreva em primeira pessoa, com linguagem natural, em português brasileiro. "
         "Não utilize dois-pontos, ponto e vírgula, reticências, travessões de diálogo ou abreviações com ponto. "
         "Não utilize terminologia psicanalítica, interpretações psicanalíticas, diagnósticos, explicações teóricas "
@@ -132,6 +151,17 @@ def construir_mensagens(
             "Se não houver instruções, invente um episódio ficcional para iniciar o relato."
         )
     sistema += " " + _INSTRUCOES_LINGUISTICAS
+    ativos = {}
+    for nome, controle in composicao.items():
+        if controle["ativo"]:
+            tipo = controle["tipo"]
+            sistema += f" {_NOMES_CONTROLES[nome]} ativo, tipo {tipo}. {_REGRAS_COMPOSICAO[nome][tipo]}"
+            ativos[nome] = {"tipo": tipo, "instrucoes_personalizadas": controle["instrucoes"]}
+    if ativos:
+        sistema += (
+            " As instruções personalizadas dos controles ativos complementam as opções selecionadas "
+            "sem substituir as regras gerais da narrativa, a função do movimento ou as restrições estruturais."
+        )
     sistema += (
         f" A intensidade dramática solicitada é {intensidade} em uma escala de 1 a 5 "
         "(1 baixa, 2 moderada, 3 significativa, 4 intensa, 5 muito intensa). "
@@ -145,6 +175,8 @@ def construir_mensagens(
         "todos_os_paragrafos_anteriores_atuais": contexto_anterior,
         "instrucoes_adicionais_deste_campo": instrucoes,
     }
+    if ativos:
+        contexto["controles_de_composicao_ativos"] = ativos
     if erros is not None:
         sistema += (
             " Corrija somente o texto do campo atual, atendendo aos erros de validação indicados e preservando "
@@ -218,7 +250,7 @@ def gerar_texto(*, provedor: str = PROVEDOR_PADRAO, modelo: str = MODELO_PADRAO,
         raise ErroAPINarrativa("O contexto da geração está incompleto ou é inválido.") from None
     corpo = json.dumps({
         "model": modelo.strip(), "messages": mensagens, "stream": False,
-        "n": 1, "max_tokens": 2048,
+        "n": 1,
     }, ensure_ascii=False).encode("utf-8")
     if len(corpo) > LIMITE_PEDIDO_BYTES:
         raise ErroAPINarrativa("O contexto da narrativa excedeu o tamanho permitido para geração.")

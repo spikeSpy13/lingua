@@ -18,6 +18,7 @@
     panels.forEach((panel) => { panel.hidden = panel.dataset.narrativePanel !== String(id); });
     activeInput.value = String(id);
     progress.textContent = `Movimento ${id} de 5 · ${selected.querySelector("span").textContent.split(" · ").slice(1).join(" · ")}`;
+    if (promptPreview && promptPreview.dataset.promptMovement !== String(id)) invalidatePromptPreview();
     if (updateUrl) {
       const url = new URL(window.location.href);
       url.searchParams.set("aba", id);
@@ -67,6 +68,43 @@
     if (choices.includes(previous)) model.value = previous;
   });
 
+  form.querySelectorAll("[data-composition-enabled]").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      checkbox.closest("[data-composition-control]").classList.toggle("is-active", checkbox.checked);
+    });
+  });
+
+  const promptPreview = form.querySelector("[data-prompt-preview]");
+  function invalidatePromptPreview() {
+    if (!promptPreview) return;
+    promptPreview.querySelector("[data-prompt-stale]").hidden = false;
+    promptPreview.querySelector("[data-prompt-current-note]").hidden = true;
+    promptPreview.querySelector("#prompt-completo").hidden = true;
+    promptPreview.querySelector("[data-copy-prompt]").hidden = true;
+    promptPreview.querySelector("[data-copy-prompt-status]").textContent = "";
+  }
+  form.addEventListener("input", invalidatePromptPreview);
+  form.addEventListener("change", invalidatePromptPreview);
+  if (promptPreview) {
+    promptPreview.focus({ preventScroll: true });
+    promptPreview.scrollIntoView({ block: "start" });
+  }
+  form.querySelector("[data-copy-prompt]")?.addEventListener("click", async () => {
+    const prompt = document.getElementById("prompt-completo");
+    const status = form.querySelector("[data-copy-prompt-status]");
+    try {
+      await navigator.clipboard.writeText(prompt.textContent);
+      status.textContent = "Prompt copiado.";
+    } catch {
+      const range = document.createRange();
+      range.selectNodeContents(prompt);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      status.textContent = "Prompt selecionado. Use Ctrl+C ou ⌘C para copiar.";
+    }
+  });
+
   let submitting = false;
   let dirty = false;
   form.addEventListener("input", () => { dirty = true; });
@@ -79,7 +117,8 @@
     form.setAttribute("aria-busy", "true");
     const status = form.querySelector("[data-submitting-status]");
     status.textContent = event.submitter?.hasAttribute("data-generates")
-      ? "Solicitando somente este campo à API. Aguarde…" : "Salvando…";
+      ? "Solicitando somente este parágrafo à API. Aguarde…"
+      : event.submitter?.value.startsWith("visualizar") ? "Preparando o prompt…" : "Salvando…";
     // Preserva o botão e todos os campos na submissão; não desabilita inputs.
   });
   form.querySelector("[data-copy-narrative]")?.addEventListener("click", async () => {

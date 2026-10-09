@@ -82,11 +82,39 @@
           {% for movement in narrative.movimentos %}
           <section class="editor narrative-field" id="movimento-{{ movement.id }}" role="tabpanel" aria-labelledby="tab-movimento-{{ movement.id }}" tabindex="0" data-narrative-panel="{{ movement.id }}"{% if active_tab != movement.id %} hidden{% endif %}>
             <div class="editor-heading"><h2>
-{{ movement.id }} · {{ movement.label }}</h2><p>Um parágrafo, cinco períodos e de 20 a 36 palavras por período. Máximo de 180 palavras no parágrafo.</p></div>
+{{ movement.id }} · {{ movement.label }}</h2><p>Um parágrafo e cinco períodos, com extensão livre. Use os controles para orientar a composição ou deixe o modelo escolher.</p></div>
             {% if movement.revisao_coerencia %}<p class="notice notice-error">Um campo anterior foi alterado. Revise a continuidade deste movimento e aprove-o novamente.</p>{% endif %}
-            <label for="instrucoes_{{ movement.id }}">Instruções deste movimento</label>
+            <label for="instrucoes_{{ movement.id }}">Descrição do movimento</label>
             <textarea id="instrucoes_{{ movement.id }}" name="instrucoes_{{ movement.id }}" rows="3" maxlength="12000" placeholder="{{ 'Descreva personagens, situação e tom desejados para começar a história.' if movement.id == 1 else 'Diga como este movimento deve continuar os parágrafos anteriores.' }}">
 {{ movement.instrucoes }}</textarea>
+            <input type="hidden" name="composicao_{{ movement.id }}" value="1">
+            <div class="narrative-inheritance">
+              <button type="submit" name="acao" value="herdar:{{ movement.id }}"{% if movement.id == 1 %} disabled{% endif %}>Herdar configurações anteriores</button>
+              <p>{{ 'A Introdução começa com configurações próprias.' if movement.id == 1 else 'Copia os três controles da aba anterior. Depois, você pode ajustá-los livremente aqui.' }}</p>
+            </div>
+            <details class="narrative-composition" id="composicao-{{ movement.id }}" open>
+              <summary>Personalizar composição</summary>
+              <p class="option-help">Cada controle é independente. Somente os controles marcados e suas instruções entram no prompt; desmarcar conserva suas escolhas.</p>
+              <div class="narrative-composition-grid">
+                {% for name, choices in composition_options.items() %}
+                {% set control = movement.composicao[name] %}
+                <fieldset class="narrative-composition-control{% if control.ativo %} is-active{% endif %}" data-composition-control>
+                  <legend><label for="{{ name }}_{{ movement.id }}_ativo"><input type="checkbox" id="{{ name }}_{{ movement.id }}_ativo" name="{{ name }}_{{ movement.id }}_ativo"{% if control.ativo %} checked{% endif %} data-composition-enabled> {{ name|capitalize }}</label></legend>
+                  <label for="{{ name }}_{{ movement.id }}_tipo">Tipo de {{ name }}
+                    <select id="{{ name }}_{{ movement.id }}_tipo" name="{{ name }}_{{ movement.id }}_tipo">
+                      {% for value, label in choices.items() %}<option value="{{ value }}"{% if control.tipo == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
+                    </select>
+                  </label>
+                  <details class="narrative-custom-instructions"{% if control.instrucoes %} open{% endif %}>
+                    <summary aria-label="Adicionar instruções de {{ name }} no movimento {{ movement.id }}"><span aria-hidden="true">+</span> Instruções personalizadas</summary>
+                    <label for="{{ name }}_{{ movement.id }}_instrucoes">Como aplicar {{ name }}</label>
+                    <textarea id="{{ name }}_{{ movement.id }}_instrucoes" name="{{ name }}_{{ movement.id }}_instrucoes" rows="4" maxlength="12000">
+{{ control.instrucoes }}</textarea>
+                  </details>
+                </fieldset>
+                {% endfor %}
+              </div>
+            </details>
             <label for="texto_{{ movement.id }}">Parágrafo atual · editável</label>
             <textarea id="texto_{{ movement.id }}" name="texto_{{ movement.id }}" rows="6" maxlength="20000">
 {{ movement.texto_atual }}</textarea>
@@ -106,9 +134,22 @@
               <button type="submit" name="acao" value="corrigir:{{ movement.id }}" data-generates>Corrigir este parágrafo pela API</button>
               <button type="submit" name="acao" value="validar:{{ movement.id }}">Validar novamente</button>
               <button type="submit" name="acao" value="aprovar:{{ movement.id }}">Aprovar movimento</button>
+              <button type="submit" name="acao" value="visualizar:{{ movement.id }}">Visualizar prompt</button>
+              {% if movement.texto_atual %}<button type="submit" name="acao" value="visualizar_correcao:{{ movement.id }}">Visualizar prompt de correção</button>{% endif %}
             </div>
           </section>
           {% endfor %}
+          {% if prompt_preview %}
+          <section class="editor narrative-prompt-preview" id="prompt-preview" data-prompt-preview data-prompt-movement="{{ prompt_preview.movimento }}" tabindex="-1">
+            <h2>Prompt do movimento {{ prompt_preview.movimento }}</h2>
+            <p>{{ prompt_preview.operacao }} · {{ prompt_preview.provedor }} · {{ prompt_preview.modelo }}</p>
+            <p data-prompt-current-note>Estas são as mensagens completas que serão enviadas ao modelo com as configurações salvas. Visualizar o prompt não solicita uma geração à API.</p>
+            <p class="notice" data-prompt-stale hidden role="status">A prévia ficou desatualizada. Clique em Visualizar prompt na aba desejada para conferir as novas mensagens.</p>
+            <pre class="narrative-source" id="prompt-completo">{{ prompt_preview.texto }}</pre>
+            <button type="button" data-copy-prompt>Copiar prompt</button>
+            <p data-copy-prompt-status role="status"></p>
+          </section>
+          {% endif %}
           <section class="editor" id="narrativa-final">
             <h2>História completa</h2>
             <p>{{ narrative.movimentos|selectattr('aprovado')|list|length }} de 5 movimentos aprovados. Depois de aprovar os cinco, reúna os parágrafos exatamente como estão.</p>

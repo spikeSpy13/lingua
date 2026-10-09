@@ -10,11 +10,11 @@ from uuid import uuid4
 
 from flask import Blueprint, Response, abort, current_app, redirect, render_template, request, url_for
 
-from api_narrativas import ErroAPINarrativa, gerar_texto, status_configuracao
+from api_narrativas import ErroAPINarrativa, construir_mensagens, gerar_texto, status_configuracao
 from narrativas import (
     ErroNarrativa, novo_estado, salvar_campos, aplicar_geracao, aprovar,
     validar_movimento, montar_narrativa, preparar_geracao,
-    migrar_estado,
+    migrar_estado, herdar_composicao, COMPOSICAO_OPCOES,
 )
 
 
@@ -65,7 +65,7 @@ def _ler(identifier):
     return dict(row)
 
 
-def _render(row=None, *, error=None, notice=None, status=200, active_tab=None):
+def _render(row=None, *, error=None, notice=None, status=200, active_tab=None, prompt_preview=None):
     with closing(_conexao()) as connection:
         drafts = connection.execute(
             "SELECT id, updated_at, state_json FROM narrative_drafts ORDER BY updated_at DESC LIMIT 30"
@@ -93,7 +93,8 @@ def _render(row=None, *, error=None, notice=None, status=200, active_tab=None):
         tab = "1"
     return render_template("narrativas.html", draft=row, narrative=state,
                            drafts=history, api_status=status_configuracao(provider),
-                           error=error, notice=notice, active_tab=int(tab), model_catalog=models), status
+                           error=error, notice=notice, active_tab=int(tab), model_catalog=models,
+                           composition_options=COMPOSICAO_OPCOES, prompt_preview=prompt_preview), status
 
 
 def _salvar(row, state, *, busy=False):
@@ -121,13 +122,31 @@ def _texto_formulario(form, name, current):
 
 
 def _campos(form, state):
+    movements = []
+    for movement in state["movimentos"]:
+        index = movement["id"]
+        fields = {
+            "id": index,
+            "instrucoes": _texto_formulario(form, f"instrucoes_{index}", movement["instrucoes"]),
+            "texto_atual": _texto_formulario(form, f"texto_{index}", movement["texto_atual"]),
+        }
+        # Formulários anteriores à atualização preservam a composição existente.
+        # O marcador distingue um controle desativado de campos não enviados.
+        if form.get(f"composicao_{index}") == "1":
+            fields["composicao"] = {
+                name: {
+                    "ativo": form.get(f"{name}_{index}_ativo") == "on",
+                    "tipo": form[f"{name}_{index}_tipo"],
+                    "instrucoes": _texto_formulario(form, f"{name}_{index}_instrucoes",
+                                                    movement["composicao"][name]["instrucoes"]),
+                }
+                for name in COMPOSICAO_OPCOES
+            }
+        movements.append(fields)
     return {
         "intensidade": form["intensidade"],
         "provedor": form["provedor"], "modelo": form["modelo"],
-        "movimentos": [{"id": i,
-                        "instrucoes": _texto_formulario(form, f"instrucoes_{i}", state["movimentos"][i-1]["instrucoes"]),
-                        "texto_atual": _texto_formulario(form, f"texto_{i}", state["movimentos"][i-1]["texto_atual"])}
-                       for i in range(1, 6)],
+        "movimentos": movements,
     }
 
 
@@ -203,6 +222,21 @@ def acao(identifier):
             if not 1 <= index <= 5:
                 raise ErroNarrativa("Selecione um campo válido.")
             target = state["movimentos"][index - 1]
+            if verb == "herdar":
+                state = herdar_composicao(state, index)
+                row = _salvar(row, state)
+                return _render(row, notice="Configurações copiadas do movimento anterior. Você pode personalizar cada controle nesta aba.", active_tab=index)
+            if verb in ("visualizar", "visualizar_correcao"):
+                correction = verb == "visualizar_correcao"
+                context = preparar_geracao(state, index, corrigir=correction)
+                messages = construir_mensagens(**context)
+                preview = {
+                    "modelo": state["modelo"], "provedor": state["provedor"],
+                    "movimento": index, "operacao": "Correção" if correction else "Geração ou regeneração",
+                    "texto": json.dumps(messages, ensure_ascii=False, indent=2, allow_nan=False),
+                }
+                return _render(row, notice="Prévia preparada. Revise o prompt antes de gerar o parágrafo.",
+                               active_tab=index, prompt_preview=preview)
             if verb == "aprovar":
                 state = aprovar(state, index)
             elif verb == "validar" and index:

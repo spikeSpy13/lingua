@@ -21,14 +21,17 @@ class TextareaValues(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.values = {}
+        self.pre_values = {}
         self.elements = []
         self.current = None
+        self.current_tag = None
         self.chunks = []
 
     def handle_starttag(self, tag, attrs):
         self.elements.append((tag, dict(attrs)))
-        if tag == "textarea":
+        if tag in ("textarea", "pre"):
             self.current = dict(attrs).get("id")
+            self.current_tag = tag
             self.chunks = []
 
     def handle_data(self, data):
@@ -36,10 +39,12 @@ class TextareaValues(HTMLParser):
             self.chunks.append(data)
 
     def handle_endtag(self, tag):
-        if tag == "textarea" and self.current is not None:
+        if tag == self.current_tag and self.current is not None:
             value = "".join(self.chunks).replace("\r\n", "\n").replace("\r", "\n")
-            self.values[self.current] = value[1:] if value.startswith("\n") else value
+            values = self.values if tag == "textarea" else self.pre_values
+            values[self.current] = value[1:] if value.startswith("\n") else value
             self.current = None
+            self.current_tag = None
 
 
 class NarrativeInterfaceTests(unittest.TestCase):
@@ -82,6 +87,13 @@ class NarrativeInterfaceTests(unittest.TestCase):
             index = movement["id"]
             form[f"instrucoes_{index}"] = movement["instrucoes"]
             form[f"texto_{index}"] = movement["texto_atual"]
+            if "composicao" in movement:
+                form[f"composicao_{index}"] = "1"
+                for name, settings in movement["composicao"].items():
+                    form[f"{name}_{index}_tipo"] = settings["tipo"]
+                    form[f"{name}_{index}_instrucoes"] = settings["instrucoes"]
+                    if settings["ativo"]:
+                        form[f"{name}_{index}_ativo"] = "on"
         return form
 
     def action(self, action, **edits):
@@ -405,6 +417,196 @@ class NarrativeInterfaceTests(unittest.TestCase):
         self.assertNotIn(legacy["planejamento"]["texto_atual"], context)
         self.assertNotIn("ideia_inicial", self.calls[0])
         self.assertNotIn("planejamento", self.calls[0])
+
+    def preview_messages(self, response):
+        self.assertEqual(response.status_code, 200)
+        parser = self.markup(response)
+        sections = [attrs for tag, attrs in parser.elements if tag == "section" and attrs.get("id") == "prompt-preview"]
+        self.assertEqual(len(sections), 1)
+        self.assertIn("data-prompt-preview", sections[0])
+        return json.loads(parser.pre_values["prompt-completo"])
+
+    def test_each_movement_has_independent_composition_controls_with_custom_instructions(self):
+        response = self.client.get(self.url)
+        parser = self.assert_five_tabs(response)
+        inputs = {attrs["name"]: attrs for _, attrs in parser.elements if "name" in attrs}
+        for index in range(1, 6):
+            self.assertEqual(inputs[f"composicao_{index}"]["value"], "1")
+            for control in ("encadeamento", "sintaxe", "ritmo"):
+                for suffix in ("ativo", "tipo", "instrucoes"):
+                    name = f"{control}_{index}_{suffix}"
+                    self.assertIn(name, inputs)
+                    self.assertNotIn("disabled", inputs[name])
+                self.assertEqual(inputs[f"{control}_{index}_ativo"]["type"], "checkbox")
+        self.assertGreaterEqual(sum(tag == "summary" for tag, _ in parser.elements), 15)
+        response = self.action("salvar", aba="3", encadeamento_1_ativo="on", encadeamento_1_tipo="causal",
+                               encadeamento_1_instrucoes="\nRetome a causa na frase seguinte.",
+                               sintaxe_3_ativo="on", sintaxe_3_tipo="contraste", sintaxe_3_instrucoes="Use uma ressalva.",
+                               ritmo_5_tipo="irregular", ritmo_5_instrucoes="Guardar sem ativar.")
+        self.assert_five_tabs(response, active=3)
+        state = self.state()
+        self.assertEqual(state["movimentos"][0]["composicao"]["encadeamento"], {
+            "ativo": True, "tipo": "causal", "instrucoes": "\nRetome a causa na frase seguinte.",
+        })
+        self.assertTrue(state["movimentos"][2]["composicao"]["sintaxe"]["ativo"])
+        self.assertFalse(state["movimentos"][4]["composicao"]["ritmo"]["ativo"])
+        self.assertEqual(state["movimentos"][4]["composicao"]["ritmo"]["instrucoes"], "Guardar sem ativar.")
+        restarted = create_app(self.config).test_client()
+        parser = self.markup(restarted.get(self.url + "?aba=5"))
+        self.assertEqual(parser.values["encadeamento_1_instrucoes"], "\nRetome a causa na frase seguinte.")
+        self.assertEqual(parser.values["ritmo_5_instrucoes"], "Guardar sem ativar.")
+        self.assertEqual(self.calls, [])
+
+    def test_disabled_controls_remain_saved_but_do_not_enter_prompt(self):
+        response = self.action("visualizar:1", encadeamento_1_ativo="on", encadeamento_1_tipo="retomada",
+                               encadeamento_1_instrucoes="REGRACUSTOMENCADATIVA", sintaxe_1_tipo="inversao",
+                               sintaxe_1_instrucoes="REGRACUSTOMSINTAXEDESATIVADA", ritmo_1_tipo="decrescente",
+                               ritmo_1_instrucoes="REGRACUSTOMRITMODESATIVADA")
+        messages = self.preview_messages(response)
+        prompt = json.dumps(messages, ensure_ascii=False)
+        self.assertIn("REGRACUSTOMENCADATIVA", prompt)
+        self.assertNotIn("REGRACUSTOMSINTAXEDESATIVADA", prompt)
+        self.assertNotIn("REGRACUSTOMRITMODESATIVADA", prompt)
+        composition = self.state()["movimentos"][0]["composicao"]
+        self.assertEqual(composition["sintaxe"]["tipo"], "inversao")
+        self.assertEqual(composition["ritmo"]["tipo"], "decrescente")
+        self.assertEqual(composition["sintaxe"]["instrucoes"], "REGRACUSTOMSINTAXEDESATIVADA")
+        self.assertEqual(self.calls, [])
+
+    def test_missing_composition_marker_preserves_controls_but_unchecked_present_marker_disables(self):
+        self.assertEqual(self.action("salvar", ritmo_1_ativo="on", ritmo_1_tipo="crescente", ritmo_1_instrucoes="Acelere a lembrança.").status_code, 200)
+        fields = self.fields()
+        for name in list(fields):
+            if name.startswith(("composicao_", "encadeamento_", "sintaxe_", "ritmo_")):
+                del fields[name]
+        fields.update({"acao": "salvar", "instrucoes_1": "Uma descrição salva por formulário anterior."})
+        self.assertEqual(self.client.post(self.url, data=fields).status_code, 200)
+        self.assertTrue(self.state()["movimentos"][0]["composicao"]["ritmo"]["ativo"])
+        fields = self.fields()
+        fields.pop("ritmo_1_ativo")
+        fields["acao"] = "visualizar:1"
+        messages = self.preview_messages(self.client.post(self.url, data=fields))
+        self.assertFalse(self.state()["movimentos"][0]["composicao"]["ritmo"]["ativo"])
+        self.assertEqual(self.state()["movimentos"][0]["composicao"]["ritmo"]["instrucoes"], "Acelere a lembrança.")
+        self.assertNotIn("Acelere a lembrança.", json.dumps(messages, ensure_ascii=False))
+
+    def test_inheritance_uses_freshly_saved_settings_without_rewriting_text_or_description(self):
+        texts = self.approve_all()
+        self.assertEqual(self.action("salvar", encadeamento_1_ativo="on", encadeamento_1_tipo="temporal",
+                                     sintaxe_1_ativo="on", sintaxe_1_tipo="paralelismo", ritmo_1_ativo="on", ritmo_1_tipo="crescente",
+                                     instrucoes_2="Descrição independente do acontecimento.").status_code, 200)
+        before = self.state()
+        response = self.action("herdar:2", ritmo_1_instrucoes="A duração cresce a partir da recordação.")
+        self.assert_five_tabs(response, active=2)
+        state = self.state()
+        self.assertEqual(state["movimentos"][1]["composicao"], state["movimentos"][0]["composicao"])
+        self.assertEqual(state["movimentos"][1]["composicao"]["ritmo"]["instrucoes"], "A duração cresce a partir da recordação.")
+        self.assertEqual(state["movimentos"][1]["instrucoes"], "Descrição independente do acontecimento.")
+        self.assertEqual([movement["texto_atual"] for movement in state["movimentos"]], texts)
+        self.assertEqual([movement["texto_gerado"] for movement in state["movimentos"]], [movement["texto_gerado"] for movement in before["movimentos"]])
+        self.assertTrue(all(movement["aprovado"] for movement in state["movimentos"]))
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.action("salvar", ritmo_2_tipo="irregular", ritmo_2_instrucoes="Mudança só na segunda aba.").status_code, 200)
+        self.assertEqual(self.state()["movimentos"][0]["composicao"]["ritmo"], state["movimentos"][0]["composicao"]["ritmo"])
+        self.assertEqual(self.state()["movimentos"][1]["composicao"]["ritmo"]["tipo"], "irregular")
+
+    def test_generation_preview_matches_exact_api_messages_without_key_or_substitution_confirmation(self):
+        first = "Eu saí. Eu vi. Eu voltei. Eu temi. Eu fiquei."
+        self.assertEqual(self.action("aprovar:1", texto_1=first).status_code, 200)
+        current = "Meu segundo parágrafo permanece editado antes da prévia."
+        key = "fake-key-not-for-prompt-or-export"
+        with patch.dict("os.environ", {"NARRATIVA_API_KEY": ""}):
+            response = self.action("visualizar:2", texto_2=current, instrucoes_2="Mostre a consequência.", intensidade="4",
+                                   encadeamento_2_ativo="on", encadeamento_2_tipo="causal", encadeamento_2_instrucoes="Encadeie causa e resultado.",
+                                   ritmo_2_ativo="on", ritmo_2_tipo="alternado", ritmo_2_instrucoes="Alterne a cadência.", texto_5="Edição de outra aba.")
+        messages = self.preview_messages(response)
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.state()["movimentos"][0]["texto_atual"], first)
+        self.assertEqual(self.state()["movimentos"][1]["texto_atual"], current)
+        self.assertEqual(self.state()["movimentos"][4]["texto_atual"], "Edição de outra aba.")
+        self.assertNotIn(key, json.dumps(messages))
+        self.app.config["NARRATIVE_GENERATOR"] = None
+        with patch.dict("os.environ", {"NARRATIVA_API_KEY": key}), patch("api_narrativas.build_opener") as factory:
+            factory.return_value.open.return_value.__enter__.return_value.read.return_value = json.dumps({
+                "choices": [{"finish_reason": "stop", "message": {"content": paragrafo("gerada")}}],
+            }).encode("utf-8")
+            generated = self.action("gerar:2", substituir_2="on")
+            self.assertEqual(generated.status_code, 200)
+            factory.return_value.open.assert_called_once()
+            request = factory.return_value.open.call_args.args[0]
+            self.assertEqual(json.loads(request.data)["messages"], messages)
+        self.assertNotIn(key, response.get_data(as_text=True))
+        self.assertNotIn(key, generated.get_data(as_text=True))
+        self.assertEqual(self.state()["movimentos"][0]["texto_atual"], first)
+
+    def test_correction_preview_matches_api_and_preserves_prior_paragraph(self):
+        first = "Eu saí. Eu vi. Eu voltei. Eu temi. Eu fiquei."
+        self.assertEqual(self.action("aprovar:1", texto_1=first).status_code, 200)
+        response = self.action("visualizar_correcao:2", texto_2="Um texto incompleto.", sintaxe_2_ativo="on",
+                               sintaxe_2_tipo="subordinacao", sintaxe_2_instrucoes="Subordine o que eu recordo.")
+        messages = self.preview_messages(response)
+        user = json.loads(messages[1]["content"])
+        self.assertEqual(user["operacao"], "corrigir_apenas_campo_atual")
+        self.assertEqual(user["texto_atual_a_corrigir"], "Um texto incompleto.")
+        self.assertTrue(user["erros_de_validacao"])
+        self.assertEqual(self.calls, [])
+        self.app.config["NARRATIVE_GENERATOR"] = None
+        with patch.dict("os.environ", {"NARRATIVA_API_KEY": "fake-test-key"}), patch("api_narrativas.build_opener") as factory:
+            factory.return_value.open.return_value.__enter__.return_value.read.return_value = json.dumps({
+                "choices": [{"finish_reason": "stop", "message": {"content": paragrafo("corrigida")}}],
+            }).encode("utf-8")
+            self.assertEqual(self.action("corrigir:2", substituir_2="on").status_code, 200)
+            request = factory.return_value.open.call_args.args[0]
+            self.assertEqual(json.loads(request.data)["messages"], messages)
+        self.assertEqual(self.state()["movimentos"][0]["texto_atual"], first)
+        self.assertTrue(self.state()["movimentos"][0]["aprovado"])
+
+    def test_preview_enforces_previous_approval_without_calling_api_or_erasing_edits(self):
+        response = self.action("visualizar:2", texto_1="Eu saí. Eu vi. Eu voltei. Eu temi. Eu fiquei.",
+                               instrucoes_2="Continue a cena.", ritmo_2_ativo="on", ritmo_2_tipo="irregular")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.state()["movimentos"][1]["instrucoes"], "Continue a cena.")
+        self.assertTrue(self.state()["movimentos"][1]["composicao"]["ritmo"]["ativo"])
+        self.assertEqual(self.calls, [])
+        self.assertNotIn("data-prompt-preview", response.get_data(as_text=True))
+
+    def test_word_counts_are_informational_and_do_not_block_approval(self):
+        short = "Eu saí. Eu vi. Eu voltei. Eu temi. Eu fiquei."
+        self.assertEqual(self.action("aprovar:1", texto_1=short).status_code, 200)
+        validation = self.state()["movimentos"][0]["validacao"]
+        self.assertTrue(validation["valido"])
+        self.assertEqual(validation["palavras_por_periodo"], [2] * 5)
+        self.assertEqual(validation["total_palavras"], 10)
+        long = " ".join([" ".join(["Eu"] + ["recordo"] * 59) + "."] * 5)
+        self.assertEqual(self.action("aprovar:2", texto_2=long).status_code, 200)
+        validation = self.state()["movimentos"][1]["validacao"]
+        self.assertTrue(validation["valido"])
+        self.assertEqual(validation["total_palavras"], 300)
+        self.assertEqual(validation["palavras_por_periodo"], [60] * 5)
+
+    def test_schema2_migration_adds_disabled_controls_and_removes_stale_word_limit_errors(self):
+        texts = self.approve_all()
+        self.assertEqual(self.action("montar").status_code, 200)
+        legacy = self.state()
+        legacy["schema_version"] = "2.0.0"
+        for movement in legacy["movimentos"]:
+            movement.pop("composicao")
+        legacy["movimentos"][0]["validacao"]["erros"] = ["Período 1 abaixo de 20 palavras."]
+        legacy["movimentos"][0]["validacao"]["valido"] = False
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("UPDATE narrative_drafts SET state_json = ? WHERE id = ?", (json.dumps(legacy, ensure_ascii=False), self.identifier))
+            connection.commit()
+        response = self.client.get(self.url + "?aba=4")
+        self.assert_five_tabs(response, active=4)
+        self.assertNotIn("abaixo de 20", response.get_data(as_text=True))
+        exported = self.client.get(self.url + "/exportar.json").get_json()
+        self.assertEqual(exported["schema_version"], "3.0.0")
+        self.assertEqual([movement["texto_atual"] for movement in exported["movimentos"]], texts)
+        self.assertTrue(all(movement["aprovado"] for movement in exported["movimentos"]))
+        self.assertTrue(exported["movimentos"][0]["validacao"]["valido"])
+        for movement in exported["movimentos"]:
+            self.assertTrue(all(not setting["ativo"] for setting in movement["composicao"].values()))
+        self.assertEqual(self.client.get(self.url + "/exportar.txt").get_data(), "\n\n".join(texts).encode("utf-8"))
 
 
 if __name__ == "__main__":

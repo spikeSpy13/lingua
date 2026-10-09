@@ -3,9 +3,13 @@ import json
 import unittest
 
 from narrativas import (
+    COMPOSICAO_OPCOES,
     ErroNarrativa,
     aplicar_geracao,
     aprovar,
+    composicao_padrao,
+    conferir_composicao,
+    herdar_composicao,
     migrar_estado,
     montar_narrativa,
     novo_estado,
@@ -42,11 +46,12 @@ class ValidacaoNarrativaTests(unittest.TestCase):
             self.assertEqual(PARAGRAFO[periodo["inicio"]:periodo["fim"]], periodo["texto"])
             self.assertTrue(periodo["terminado"])
 
-    def test_limites_palavras_por_periodo(self):
-        for quantidade, valido in ((19, False), (20, True), (36, True), (37, False)):
+    def test_contagens_palavras_por_periodo_sao_apenas_informativas(self):
+        for quantidade in (1, 19, 20, 36, 37, 300):
             with self.subTest(palavras=quantidade):
                 resultado = validar_movimento(com_palavras(quantidade))
-                self.assertEqual(resultado["valido"], valido)
+                self.assertTrue(resultado["valido"])
+                self.assertEqual(resultado["erros"], [])
                 self.assertEqual(resultado["palavras_por_periodo"], [quantidade] * 5)
                 self.assertEqual(resultado["total_palavras"], quantidade * 5)
 
@@ -57,10 +62,12 @@ class ValidacaoNarrativaTests(unittest.TestCase):
                 self.assertEqual(resultado["quantidade_periodos"], quantidade)
                 self.assertEqual(resultado["valido"], quantidade == 5)
 
-    def test_maximo_180_independe_de_contagem_por_periodo(self):
-        resultado = validar_movimento(com_palavras(36, 6))
-        self.assertEqual(resultado["total_palavras"], 216)
-        self.assertTrue(any("máximo permitido de 180" in erro for erro in resultado["erros"]))
+    def test_paragrafo_acima_180_palavras_e_permitido(self):
+        resultado = validar_movimento(com_palavras(100))
+        self.assertEqual(resultado["total_palavras"], 500)
+        self.assertEqual(resultado["quantidade_periodos"], 5)
+        self.assertTrue(resultado["valido"])
+        self.assertEqual(resultado["erros"], [])
 
     def test_paragrafos_separados_por_linha_em_branco_crlf_e_unicode(self):
         for separador in ("\n\n", "\r\n\r\n", "\r\r", "\n \t\n", "\u2029"):
@@ -168,6 +175,8 @@ class EstadoNarrativaTests(unittest.TestCase):
             "historico": [{"indice": 0, "operacao": "edicao_manual", "texto_anterior": "Outra sinopse."}],
         }
         antigo["movimentos"][0]["label"] = "Contextualização"
+        for movimento in antigo["movimentos"]:
+            movimento.pop("composicao", None)
         antigo["historico_alteracoes"].append({"indice": 0, "operacao": "edicao_manual", "texto_anterior": "Outra sinopse."})
         return antigo
 
@@ -181,7 +190,7 @@ class EstadoNarrativaTests(unittest.TestCase):
 
     def test_estado_padrao_serializavel_e_independente(self):
         estado = novo_estado()
-        self.assertEqual(estado["schema_version"], "2.0.0")
+        self.assertEqual(estado["schema_version"], "3.0.0")
         self.assertEqual(estado["intensidade"], 3)
         self.assertEqual(estado["provedor"], "openrouter")
         self.assertEqual(estado["modelo"], "openai/gpt-4.1-mini")
@@ -290,7 +299,7 @@ class EstadoNarrativaTests(unittest.TestCase):
         for indice in range(1, 5):
             estado = aprovar(estado, indice)
         contexto = preparar_geracao(estado, 5)
-        self.assertEqual(set(contexto), {"indice", "anteriores", "instrucoes", "intensidade", "texto_atual", "erros"})
+        self.assertEqual(set(contexto), {"indice", "anteriores", "instrucoes", "composicao", "intensidade", "texto_atual", "erros"})
         self.assertEqual([item["id"] for item in contexto["anteriores"]], [1, 2, 3, 4])
         self.assertEqual(contexto["anteriores"][0]["texto"], anterior)
         self.assertEqual([item["texto"] for item in contexto["anteriores"]], [item["texto_atual"] for item in estado["movimentos"][:4]])
@@ -301,7 +310,7 @@ class EstadoNarrativaTests(unittest.TestCase):
         contexto = preparar_geracao(estado, 1)
         self.assertEqual(contexto, {
             "indice": 1, "anteriores": [], "instrucoes": "", "intensidade": 3,
-            "texto_atual": "", "erros": None,
+            "composicao": composicao_padrao(), "texto_atual": "", "erros": None,
         })
         gerado = aplicar_geracao(estado, 1, PARAGRAFO, "modelo-teste")
         self.assertEqual(gerado["movimentos"][0]["texto_atual"], PARAGRAFO)
@@ -399,12 +408,13 @@ class EstadoNarrativaTests(unittest.TestCase):
         snapshot = copy.deepcopy(antigo)
         migrado = migrar_estado(antigo)
         self.assertEqual(antigo, snapshot)
-        self.assertEqual(migrado["schema_version"], "2.0.0")
+        self.assertEqual(migrado["schema_version"], "3.0.0")
         self.assertNotIn("ideia_inicial", migrado)
         self.assertNotIn("planejamento", migrado)
         self.assertEqual(migrado["movimentos"][0]["label"], "Introdução")
         for anterior, atual in zip(antigo["movimentos"], migrado["movimentos"]):
             esperado = copy.deepcopy(anterior)
+            esperado["composicao"] = composicao_padrao()
             if esperado["id"] == 1:
                 esperado["label"] = "Introdução"
             self.assertEqual(atual, esperado)
@@ -460,7 +470,7 @@ class EstadoNarrativaTests(unittest.TestCase):
         ):
             with self.subTest(operacao=operacao):
                 atualizado = operacao()
-                self.assertEqual(atualizado["schema_version"], "2.0.0")
+                self.assertEqual(atualizado["schema_version"], "3.0.0")
                 self.assertEqual(atualizado["legado"]["planejamento"], antigo["planejamento"])
                 self.assertEqual(atualizado["movimentos"][4]["texto_atual"], antigo["movimentos"][4]["texto_atual"])
                 self.assertNotIn("ideia_inicial", atualizado)
@@ -487,7 +497,7 @@ class EstadoNarrativaTests(unittest.TestCase):
         self.assertTrue(montar_narrativa(migrado)["narrativa_final"])
 
     def test_migracao_recusa_estado_antigo_incompleto_e_versao_desconhecida(self):
-        for estado in (None, [], {}, {"schema_version": "3.0.0"}):
+        for estado in (None, [], {}, {"schema_version": "4.0.0"}):
             with self.subTest(estado=estado):
                 with self.assertRaises(ErroNarrativa):
                     migrar_estado(estado)
@@ -498,11 +508,234 @@ class EstadoNarrativaTests(unittest.TestCase):
                 with self.assertRaises(ErroNarrativa):
                     migrar_estado(estado)
 
+    def test_migracao_schema2_preserva_legado_e_adiciona_controles_independentes(self):
+        antigo = migrar_estado(self.estado_antigo(montar_narrativa(self.cinco_aprovados())))
+        antigo["schema_version"] = "2.0.0"
+        for movimento in antigo["movimentos"]:
+            del movimento["composicao"]
+        snapshot = copy.deepcopy(antigo)
+        migrado = migrar_estado(antigo)
+        self.assertEqual(antigo, snapshot)
+        self.assertEqual(migrado["schema_version"], "3.0.0")
+        for nome in ("legado", "narrativa_final", "historico_alteracoes", "modelo", "provedor", "intensidade"):
+            self.assertEqual(migrado[nome], antigo[nome])
+        for anterior, atual in zip(antigo["movimentos"], migrado["movimentos"]):
+            self.assertEqual(atual, {**anterior, "composicao": composicao_padrao()})
+        migrado["movimentos"][0]["composicao"]["ritmo"]["instrucoes"] = "Cadência singular."
+        self.assertEqual(migrado["movimentos"][1]["composicao"], composicao_padrao())
+        self.assertEqual(migrar_estado(migrado), migrado)
+
+    def test_migracao_reavalia_validacoes_antigas_sem_alterar_aprovacoes_ou_final(self):
+        for versao in ("1.0.0", "2.0.0"):
+            with self.subTest(versao=versao):
+                antigo = self.estado_antigo(self.cinco_aprovados())
+                if versao == "2.0.0":
+                    del antigo["ideia_inicial"]
+                    del antigo["planejamento"]
+                    antigo["schema_version"] = versao
+                    antigo["legado"] = {"rascunho": "  Dados anteriores.\r\n"}
+                for indice, movimento in enumerate(antigo["movimentos"]):
+                    texto = "  " + com_palavras(1 if indice % 2 else 80) + "  "
+                    movimento["texto_atual"] = texto
+                    movimento["texto_gerado"] = "Versão gerada anterior distinta."
+                    movimento["validacao"] = {
+                        "valido": False,
+                        "erros": ["Período com 1 palavra; permitido de 20 a 36.", "Máximo de 180 palavras."],
+                        "total_palavras": 999,
+                    }
+                antigo["narrativa_final"] = "\n\n".join(item["texto_atual"] for item in antigo["movimentos"])
+                snapshot = copy.deepcopy(antigo)
+                migrado = migrar_estado(antigo)
+                self.assertEqual(antigo, snapshot)
+                self.assertEqual(migrado["narrativa_final"], antigo["narrativa_final"])
+                self.assertEqual(migrado["historico_alteracoes"], antigo["historico_alteracoes"])
+                for anterior, atual in zip(antigo["movimentos"], migrado["movimentos"]):
+                    self.assertTrue(atual["validacao"]["valido"])
+                    self.assertEqual(atual["validacao"], validar_movimento(atual["texto_atual"]))
+                    for nome in ("texto_atual", "texto_gerado", "aprovado", "historico", "modelo_utilizado", "revisao_coerencia"):
+                        self.assertEqual(atual[nome], anterior[nome])
+                self.assertEqual(montar_narrativa(migrado)["narrativa_final"], antigo["narrativa_final"])
+
+    def test_migracao_preserva_validacao_none_e_nao_aprova_implicitamente(self):
+        antigo = self.estado_antigo()
+        antigo["movimentos"][0]["texto_atual"] = com_palavras(1)
+        migrado = migrar_estado(antigo)
+        self.assertIsNone(migrado["movimentos"][0]["validacao"])
+        self.assertFalse(migrado["movimentos"][0]["aprovado"])
+        aprovado = aprovar(migrado, 1)
+        self.assertTrue(aprovado["movimentos"][0]["aprovado"])
+        self.assertTrue(aprovado["movimentos"][0]["validacao"]["valido"])
+
+    def test_migracao_tolera_validacao_ausente_em_rascunho_schema2(self):
+        antigo = novo_estado()
+        antigo["schema_version"] = "2.0.0"
+        for movimento in antigo["movimentos"]:
+            del movimento["composicao"]
+            del movimento["validacao"]
+        migrado = migrar_estado(antigo)
+        self.assertEqual(migrado["schema_version"], "3.0.0")
+        self.assertFalse(migrado["movimentos"][0]["aprovado"])
+        self.assertIsNone(migrado["movimentos"][0].get("validacao"))
+        self.assertEqual(migrado["movimentos"][0]["composicao"], composicao_padrao())
+
+    def test_movimentos_curto_e_longo_podem_aprovar_encadear_e_montar(self):
+        estado = novo_estado()
+        for indice, tamanho in enumerate((1, 10, 37, 100, 300), 1):
+            texto = com_palavras(tamanho)
+            estado = aplicar_geracao(estado, indice, texto, "modelo-teste")
+            estado = aprovar(estado, indice)
+        resultado = montar_narrativa(estado)
+        self.assertEqual(resultado["narrativa_final"], "\n\n".join(item["texto_atual"] for item in estado["movimentos"]))
+        self.assertTrue(all(item["aprovado"] for item in resultado["movimentos"]))
+        self.assertEqual(resultado["movimentos"][-1]["validacao"]["total_palavras"], 1500)
+
+    def test_catalogo_e_controles_padrao_sao_independentes(self):
+        self.assertEqual(set(COMPOSICAO_OPCOES), {"encadeamento", "sintaxe", "ritmo"})
+        self.assertEqual(set(COMPOSICAO_OPCOES["encadeamento"]), {"progressivo", "causal", "temporal", "retomada"})
+        self.assertEqual(set(COMPOSICAO_OPCOES["sintaxe"]), {"afirmacao_negacao", "contraste", "paralelismo", "inversao", "subordinacao"})
+        self.assertEqual(set(COMPOSICAO_OPCOES["ritmo"]), {"regular", "crescente", "decrescente", "alternado", "irregular"})
+        primeiro = composicao_padrao()
+        segundo = composicao_padrao()
+        primeiro["ritmo"]["instrucoes"] = "  Cadência diferente.\n"
+        primeiro["ritmo"]["ativo"] = True
+        self.assertEqual(segundo["ritmo"], {"ativo": False, "tipo": "regular", "instrucoes": ""})
+        self.assertFalse(primeiro["sintaxe"]["ativo"])
+        estado = novo_estado()
+        estado["movimentos"][0]["composicao"]["ritmo"]["ativo"] = True
+        self.assertFalse(estado["movimentos"][1]["composicao"]["ritmo"]["ativo"])
+        self.assertFalse(novo_estado()["movimentos"][0]["composicao"]["ritmo"]["ativo"])
+
+    def test_conferir_composicao_aceita_tipos_catalogados_preserva_instrucoes_e_copia(self):
+        for nome, opcoes in COMPOSICAO_OPCOES.items():
+            for tipo in opcoes:
+                with self.subTest(controle=nome, tipo=tipo):
+                    composicao = composicao_padrao()
+                    composicao[nome] = {"ativo": True, "tipo": tipo, "instrucoes": " \nUma escolha com ação e cadência.\r\n "}
+                    validada = conferir_composicao(composicao)
+                    self.assertEqual(validada, composicao)
+                    validada[nome]["instrucoes"] = "Outra instrução."
+                    self.assertNotEqual(validada[nome]["instrucoes"], composicao[nome]["instrucoes"])
+
+    def test_conferir_composicao_recusa_formato_campos_e_valores_invalidos(self):
+        invalidos = [None, [], {}, {**composicao_padrao(), "extra": {}}]
+        sem_controle = composicao_padrao()
+        del sem_controle["ritmo"]
+        invalidos.append(sem_controle)
+        for valor in (None, {}, {"ativo": False, "tipo": "regular"}, {"ativo": False, "tipo": "regular", "instrucoes": "", "extra": True}):
+            invalidos.append({**composicao_padrao(), "ritmo": valor})
+        for nome, valores in (
+            ("ativo", (None, 0, 1, "false", [])),
+            ("tipo", (None, 1, "desconhecido", "causal", [])),
+            ("instrucoes", (None, True, 1, [], "\ud800")),
+        ):
+            for valor in valores:
+                composicao = composicao_padrao()
+                composicao["ritmo"][nome] = valor
+                invalidos.append(composicao)
+        for valor in invalidos:
+            with self.subTest(composicao=repr(valor)):
+                snapshot = copy.deepcopy(valor)
+                with self.assertRaises(ErroNarrativa):
+                    conferir_composicao(valor)
+                self.assertEqual(valor, snapshot)
+
+    def test_salvar_composicao_nao_altera_textos_aprovacao_ou_posteriores(self):
+        estado = montar_narrativa(self.cinco_aprovados())
+        composicao = composicao_padrao()
+        composicao["sintaxe"] = {"ativo": True, "tipo": "contraste", "instrucoes": "  Preserve a ressalva.\n"}
+        atualizado = salvar_campos(estado, {"movimentos": [{"id": 2, "composicao": composicao}]})
+        self.assertEqual(atualizado["narrativa_final"], estado["narrativa_final"])
+        self.assertEqual(atualizado["movimentos"][1]["composicao"], composicao)
+        for anterior, atual in zip(estado["movimentos"], atualizado["movimentos"]):
+            for nome in ("texto_atual", "texto_gerado", "aprovado", "validacao", "modelo_utilizado", "revisao_coerencia", "instrucoes"):
+                self.assertEqual(atual[nome], anterior[nome])
+            if anterior["id"] != 2:
+                self.assertEqual(atual, anterior)
+        evento = atualizado["movimentos"][1]["historico"][-1]
+        self.assertEqual(evento["operacao"], "alteracao_composicao")
+        self.assertEqual(evento["antes"], composicao_padrao())
+        self.assertEqual(evento["depois"], composicao)
+        composicao["sintaxe"]["instrucoes"] = "Modificação externa."
+        self.assertNotEqual(atualizado["movimentos"][1]["composicao"], composicao)
+        self.assertEqual(salvar_campos(atualizado, {"movimentos": [{"id": 2, "composicao": atualizado["movimentos"][1]["composicao"]}]}), atualizado)
+
+    def test_desativar_controle_preserva_suas_instrucoes(self):
+        composicao = composicao_padrao()
+        composicao["ritmo"] = {"ativo": True, "tipo": "crescente", "instrucoes": "Aumente gradualmente as pausas."}
+        estado = salvar_campos(novo_estado(), {"movimentos": [{"id": 1, "composicao": composicao}]})
+        composicao["ritmo"]["ativo"] = False
+        atualizado = salvar_campos(estado, {"movimentos": [{"id": 1, "composicao": composicao}]})
+        self.assertFalse(atualizado["movimentos"][0]["composicao"]["ritmo"]["ativo"])
+        self.assertEqual(atualizado["movimentos"][0]["composicao"]["ritmo"]["instrucoes"], "Aumente gradualmente as pausas.")
+
+    def test_preparar_geracao_copia_apenas_composicao_do_alvo(self):
+        estado = self.cinco_aprovados()
+        alvo = composicao_padrao()
+        alvo["encadeamento"] = {"ativo": True, "tipo": "retomada", "instrucoes": "Retome o caderno."}
+        anterior = composicao_padrao()
+        anterior["ritmo"] = {"ativo": True, "tipo": "decrescente", "instrucoes": "Configuração só do anterior."}
+        estado = salvar_campos(estado, {"movimentos": [{"id": 4, "composicao": anterior}, {"id": 5, "composicao": alvo}]})
+        contexto = preparar_geracao(estado, 5)
+        self.assertEqual(contexto["composicao"], alvo)
+        self.assertEqual(len(contexto["anteriores"]), 4)
+        self.assertTrue(all(set(item) == {"id", "label", "texto"} for item in contexto["anteriores"]))
+        contexto["composicao"]["encadeamento"]["tipo"] = "temporal"
+        self.assertEqual(estado["movimentos"][4]["composicao"], alvo)
+
+    def test_heranca_e_snapshot_e_preserva_demais_dados(self):
+        estado = montar_narrativa(self.cinco_aprovados())
+        composicao = composicao_padrao()
+        composicao["encadeamento"] = {"ativo": True, "tipo": "causal", "instrucoes": "Ligue as ações."}
+        composicao["sintaxe"] = {"ativo": False, "tipo": "inversao", "instrucoes": "Guardar para ativar depois."}
+        composicao["ritmo"] = {"ativo": True, "tipo": "alternado", "instrucoes": "  Alterne a cadência.\r\n"}
+        estado = salvar_campos(estado, {"movimentos": [{"id": 2, "composicao": composicao, "instrucoes": "Descrição anterior, não herdar."}]})
+        snapshot = copy.deepcopy(estado)
+        herdado = herdar_composicao(estado, 3)
+        self.assertEqual(estado, snapshot)
+        self.assertEqual(herdado["movimentos"][2]["composicao"], composicao)
+        self.assertEqual(herdado["narrativa_final"], estado["narrativa_final"])
+        for anterior, atual in zip(estado["movimentos"], herdado["movimentos"]):
+            for nome in ("texto_atual", "texto_gerado", "aprovado", "validacao", "modelo_utilizado", "revisao_coerencia", "instrucoes"):
+                self.assertEqual(atual[nome], anterior[nome])
+            if anterior["id"] != 3:
+                self.assertEqual(atual, anterior)
+        evento = herdado["movimentos"][2]["historico"][-1]
+        self.assertEqual(evento["operacao"], "heranca_composicao")
+        self.assertEqual(evento["movimento_origem"], 2)
+        self.assertEqual(evento["depois"], composicao)
+        nova = composicao_padrao()
+        nova["ritmo"]["tipo"] = "irregular"
+        alterado = salvar_campos(herdado, {"movimentos": [{"id": 2, "composicao": nova}]})
+        self.assertEqual(alterado["movimentos"][2]["composicao"], composicao)
+        personalizado = salvar_campos(herdado, {"movimentos": [{"id": 3, "composicao": nova}]})
+        self.assertEqual(personalizado["movimentos"][1]["composicao"], composicao)
+        personalizado["movimentos"][2]["composicao"]["ritmo"]["ativo"] = False
+        self.assertTrue(personalizado["movimentos"][1]["composicao"]["ritmo"]["ativo"])
+
+    def test_heranca_nao_exige_aprovacao_e_recusa_introducao_ou_indice_invalido(self):
+        herdado = herdar_composicao(novo_estado(), 2)
+        self.assertEqual(herdado["movimentos"][1]["composicao"], composicao_padrao())
+        self.assertFalse(herdado["movimentos"][1]["aprovado"])
+        for indice in (1, 0, 6, None, True, "2"):
+            with self.subTest(indice=indice):
+                with self.assertRaises(ErroNarrativa):
+                    herdar_composicao(novo_estado(), indice)
+
+    def test_heranca_em_estado_antigo_migra_sem_apagar_textos(self):
+        antigo = self.estado_antigo(self.cinco_aprovados())
+        herdado = herdar_composicao(antigo, 4)
+        self.assertEqual(herdado["schema_version"], "3.0.0")
+        self.assertEqual(herdado["legado"]["planejamento"], antigo["planejamento"])
+        self.assertEqual([item["texto_atual"] for item in herdado["movimentos"]], [item["texto_atual"] for item in antigo["movimentos"]])
+        self.assertTrue(all(item["aprovado"] for item in herdado["movimentos"]))
+
     def test_recusa_campos_protegidos_indices_duplicados_e_configuracoes_invalidas(self):
         for campos in (
             {"narrativa_final": "injetado"},
             {"planejamento": {"aprovado": True}},
             {"movimentos": [{"id": 1, "texto_gerado": "injetado"}]},
+            {"movimentos": [{"id": 1, "composicao": None}]},
+            {"movimentos": [{"id": 1, "composicao": {"ritmo": {"ativo": True}}}]},
             {"movimentos": [{"id": 1}, {"id": 1}]},
             {"movimentos": [{"id": 0}]},
             {"movimentos": [{"id": True}]},
@@ -533,7 +766,7 @@ class EstadoNarrativaTests(unittest.TestCase):
                     validar(novo_estado(), indice)
                 with self.assertRaises(ErroNarrativa):
                     aplicar_geracao(novo_estado(), indice, PARAGRAFO, "modelo-teste")
-        for estado in (None, {}, [], {"schema_version": "3.0.0"}):
+        for estado in (None, {}, [], {"schema_version": "4.0.0"}):
             with self.subTest(estado=estado):
                 with self.assertRaises(ErroNarrativa):
                     salvar_campos(estado, {})
