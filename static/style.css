@@ -193,8 +193,8 @@ textarea[readonly] { background: #f7f8f4; }
 .unit-counts dd { margin: 0; font-size: 28px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.4; }
 .download-link { display: inline-flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 600; text-underline-offset: 3px; }
 .segmentation-result .periods-heading { margin-top: 28px; }
-.period-list { margin: 0; padding-left: 30px; }
-.period-list li { padding: 0 0 18px 6px; }
+.period-list { margin: 0; padding-left: 0; list-style: none; }
+.period-list li { padding: 0 0 18px; }
 .period-list li + li { padding-top: 18px; border-top: 1px solid var(--line); }
 .period-list li:last-child { padding-bottom: 0; }
 .period-list li::marker { color: var(--muted); font-size: 14px; font-weight: 600; }
@@ -202,6 +202,16 @@ textarea[readonly] { background: #f7f8f4; }
 .period-location { margin-top: 8px; color: var(--muted); font-size: 12px; }
 .period-location summary, .segmentation-history summary, .preparation-history summary, .annotation-history summary, .analysis-history summary { cursor: pointer; }
 .period-location p { margin: 6px 0 0; }
+.period-card > summary { cursor: pointer; font-size: 14px; font-weight: 650; }
+.period-body { padding-top: 12px; }
+.period-rewrite { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; }
+.period-rewrite > summary { cursor: pointer; color: var(--accent); font-size: 14px; font-weight: 600; }
+.period-rewrite form { margin-top: 16px; }
+.period-rewrite textarea { min-height: 110px; }
+.period-rewrite-status { margin: 12px 0; font-size: 13px; color: var(--muted); }
+.period-rewrite-status:empty { margin: 16px 0; }
+.period-rewrite-status.is-error { color: #a43b30; }
+.period-rewrite button:disabled { opacity: .65; cursor: wait; }
 .empty-result { margin: 0; color: var(--muted); font-size: 14px; }
 .segmentation-history, .preparation-history, .annotation-history, .analysis-history { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--line); font-size: 14px; }
 .segmentation-history ul, .preparation-history ul, .annotation-history ul, .analysis-history ul { margin: 12px 0 0; padding: 0; list-style: none; }

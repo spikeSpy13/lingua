@@ -10,6 +10,21 @@ O registro usa `schema_version = "1.0.0"` e
 a estrutura foi validada; a escolha de fronteiras linguísticas continua sujeita
 a ambiguidades e à revisão humana.
 
+Na aba **Segmentação**, os períodos aparecem recolhidos como **Período 1**,
+**Período 2** e assim por diante. Abra um período para consultar seu texto e
+sua localização. Abaixo de **Localização no texto de trabalho**, abra
+**Revisar ou reescrever período**: o primeiro campo recebe um prompt opcional
+e o segundo, somente leitura, exibe o resultado. Com o prompt vazio, o pedido
+padrão revisa a gramática, a clareza e a fluidez, preservando o sentido.
+
+A reescrita usa a mesma `NARRATIVA_API_KEY` do **Gerar narrativa**, pelo
+OpenRouter, com o modelo padrão `openai/gpt-4.1-mini`. Não exige uma segunda
+chave. Cada solicitação envia apenas o período selecionado e o prompt ao
+provedor. O resultado fica disponível na caixa enquanto a página estiver
+aberta, para consulta e cópia; não altera o texto original nem os registros
+de segmentação e análise. O prompt admite até 8.000 caracteres. Falhas da API
+são exibidas no próprio painel, preservando qualquer resultado anterior.
+
 ## Instalação e uso direto
 
 A dependência é spaCy 3.8.16. Seus metadados oficiais no
@@ -193,6 +208,12 @@ anteriores permanecem intactos, e o banco continua local e fora do Git.
   de URL, inclusive quando os IDs contêm `/`.
 - `GET /envios/<id>/segmentacoes/<segmentacao_id>/periodos/<periodo_id>/contexto.json`:
   mantém o acesso por caminho para IDs sem barras.
+- `POST /envios/<id>/periodos/reescrever`: recebe JSON com `segmentacao_id`,
+  `periodo_id` e `prompt` opcional. Resolve o texto na segmentação salva desse
+  documento e retorna `{"texto": "..."}` com HTTP 200, sem gravar alterações.
+  Prompt vazio ou composto apenas por espaços usa a revisão padrão. Pedidos
+  inválidos retornam HTTP 400; origem ausente, 404; origem inválida, 409;
+  falhas de geração, 502. A resposta não é armazenada em cache.
 
 Para montar a rota recomendada em Python:
 

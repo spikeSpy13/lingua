@@ -68,6 +68,9 @@ from persistencia_vetores import (
     json_canonico,
 )
 from interface_narrativas import bp as narrativas_blueprint, criar_tabela as criar_tabela_narrativas
+from api_narrativas import (
+    ErroAPINarrativa, LIMITE_PROMPT_PERIODO, MODELO_PADRAO, PROVEDOR_PADRAO, reescrever_periodo,
+)
 
 
 BASE = Path(__file__).resolve().parent
@@ -501,6 +504,8 @@ def create_app(config=None):
         raise ValueError("O gerador injetado de embeddings é permitido somente em TESTING.")
     if app.config.get("NARRATIVE_GENERATOR") is not None and not app.config["TESTING"]:
         raise ValueError("O gerador narrativo injetado é permitido somente em TESTING.")
+    if app.config.get("PERIOD_REWRITE_GENERATOR") is not None and not app.config["TESTING"]:
+        raise ValueError("O gerador injetado de reescrita de períodos é permitido somente em TESTING.")
     app.register_blueprint(narrativas_blueprint)
 
     @app.template_filter("horario_brasilia")
@@ -1573,6 +1578,75 @@ def create_app(config=None):
             return {"erro": "Representação não encontrada nesta execução de vetorização."}, 404
         representation = consultar_representacao(vectorized, identifier)
         return Response(json.dumps(representation, ensure_ascii=False, allow_nan=False), mimetype="application/json")
+
+    @app.post("/envios/<int:record_id>/periodos/reescrever")
+    def rewrite_period(record_id):
+        def result(payload, status=200):
+            response = app.json.response(payload)
+            response.status_code = status
+            response.headers["Cache-Control"] = "no-store"
+            return response
+
+        def unique_fields(pairs):
+            fields = {}
+            for name, value in pairs:
+                if name in fields:
+                    raise ValueError("Campo JSON duplicado.")
+                fields[name] = value
+            return fields
+
+        def invalid_constant(_value):
+            raise ValueError("Constante JSON inválida.")
+
+        if not request.is_json:
+            return result({"erro": "Envie um objeto JSON com segmentacao_id, periodo_id e prompt opcional."}, 400)
+        try:
+            payload = json.loads(
+                request.get_data().decode("utf-8"), object_pairs_hook=unique_fields,
+                parse_constant=invalid_constant,
+            )
+        except (ValueError, UnicodeDecodeError, RecursionError):
+            return result({"erro": "O pedido deve conter um objeto JSON válido, sem campos duplicados."}, 400)
+        required = {"segmentacao_id", "periodo_id"}
+        if not isinstance(payload, dict) or not required <= payload.keys() or payload.keys() - (required | {"prompt"}):
+            return result({"erro": "Envie somente segmentacao_id, periodo_id e prompt opcional."}, 400)
+        if any(not isinstance(payload[name], str) or not payload[name].strip() for name in required):
+            return result({"erro": "segmentacao_id e periodo_id devem ser identificadores textuais não vazios."}, 400)
+        prompt = payload.get("prompt", "")
+        if not isinstance(prompt, str) or len(prompt) > LIMITE_PROMPT_PERIODO:
+            return result({"erro": f"O prompt deve ser um texto de até {LIMITE_PROMPT_PERIODO} caracteres."}, 400)
+        try:
+            for value in (payload["segmentacao_id"], payload["periodo_id"], prompt):
+                value.encode("utf-8")
+        except UnicodeEncodeError:
+            return result({"erro": "O pedido contém texto inválido."}, 400)
+
+        # Resolva a versão exata no servidor e feche a conexão antes da chamada à API.
+        # A reescrita é uma sugestão: não altera o documento nem seus registros salvos.
+        with closing(connect_database(app.config["DATABASE"])) as connection:
+            document = connection.execute("SELECT * FROM submissions WHERE id = ?", (record_id,)).fetchone()
+            if document is None:
+                return result({"erro": "Documento não encontrado."}, 404)
+            try:
+                segmented = latest_segmentation(connection, document, segmentation_id=payload["segmentacao_id"])
+            except (ErroPreparacao, ErroSegmentacao, RecursionError):
+                return result({"erro": "A segmentação ou sua preparação armazenada é inválida. Gere uma nova segmentação."}, 409)
+        if segmented is None:
+            return result({"erro": "Segmentação não encontrada neste documento."}, 404)
+        period = next((item for item in segmented["periodos"] if item["id"] == payload["periodo_id"]), None)
+        if period is None:
+            return result({"erro": "Período não encontrado nesta segmentação."}, 404)
+        try:
+            generator = app.config.get("PERIOD_REWRITE_GENERATOR") or reescrever_periodo
+            text = generator(texto=period["texto"], prompt=prompt, provedor=PROVEDOR_PADRAO, modelo=MODELO_PADRAO)
+            if not isinstance(text, str) or not text.strip():
+                raise ErroAPINarrativa("O provedor retornou um texto vazio ou inválido. Solicite a reescrita novamente.")
+        except ErroAPINarrativa as error:
+            return result({"erro": str(error)}, 502)
+        except Exception:
+            # Nunca exponha detalhes de transporte, credenciais ou conteúdo em falhas inesperadas.
+            return result({"erro": "Não foi possível reescrever o período. Tente novamente mais tarde."}, 502)
+        return result({"texto": text.strip()})
 
     @app.get("/envios/<int:record_id>/segmentacoes/<segmentacao_id>/periodos/<periodo_id>/contexto.json")
     @app.get("/envios/<int:record_id>/contexto-periodo.json")

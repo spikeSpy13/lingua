@@ -6,6 +6,7 @@
     <title>Etapas · Análise linguística</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <script src="{{ url_for('static', filename='etapas.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='reescrita_periodos.js') }}" defer></script>
   </head>
   <body>
     <div class="page">
@@ -174,10 +175,30 @@
             <ol class="period-list">
               {% for periodo in segmented.periodos %}
               <li>
-                <p class="period-text">{{ periodo.texto }}</p>
-                <details class="period-location">
-                  <summary>Localização no texto de trabalho</summary>
-                  <p>Caracteres {{ periodo.trabalho.inicio }} a {{ periodo.trabalho.fim }}. A contagem começa em zero e o limite final é exclusivo.</p>
+                <details class="period-card">
+                  <summary>Período {{ loop.index }}</summary>
+                  <div class="period-body">
+                    <p class="period-text">{{ periodo.texto }}</p>
+                    <details class="period-location">
+                      <summary>Localização no texto de trabalho</summary>
+                      <p>Caracteres {{ periodo.trabalho.inicio }} a {{ periodo.trabalho.fim }}. A contagem começa em zero e o limite final é exclusivo.</p>
+                    </details>
+                    <details class="period-rewrite">
+                      <summary>Revisar ou reescrever período</summary>
+                      <form method="post" action="{{ url_for('rewrite_period', record_id=record.id) }}" data-period-rewrite-form>
+                        <input type="hidden" name="segmentacao_id" value="{{ segmented.segmentacao_id }}">
+                        <input type="hidden" name="periodo_id" value="{{ periodo.id }}">
+                        <label for="period-prompt-{{ loop.index }}">Prompt (opcional)</label>
+                        <textarea id="period-prompt-{{ loop.index }}" name="prompt" rows="3" maxlength="8000" placeholder="Revise e reescreva este período, preservando o sentido." aria-describedby="period-prompt-help-{{ loop.index }}"></textarea>
+                        <p id="period-prompt-help-{{ loop.index }}" class="option-help">Deixe vazio para revisar e reescrever o período. A geração usa a mesma chave do Gerar narrativa.</p>
+                        <button type="submit">Reescrever período</button>
+                        <p class="period-rewrite-status" data-period-rewrite-status role="status" aria-live="polite"></p>
+                        <label for="period-result-{{ loop.index }}">Resultado</label>
+                        <textarea id="period-result-{{ loop.index }}" rows="4" readonly data-period-rewrite-result placeholder="O período reescrito aparecerá aqui."></textarea>
+                      </form>
+                      <noscript><p>Ative o JavaScript para gerar a reescrita nesta caixa.</p></noscript>
+                    </details>
+                  </div>
                 </details>
               </li>
               {% endfor %}
