@@ -234,6 +234,8 @@ class ClienteNarrativaTests(unittest.TestCase):
         self.assertFalse(corpo["stream"])
         self.assertEqual(corpo["n"], 1)
         self.assertNotIn("max_tokens", corpo)
+        self.assertNotIn("response_format", corpo)
+        self.assertNotIn("provider", corpo)
         self.assertNotIn(self.CHAVE_FICTICIA, pedido.data.decode())
         self.assertIn(self.TEXTO_PRIVADO, corpo["messages"][1]["content"])
         contexto = json.loads(corpo["messages"][1]["content"])
@@ -269,6 +271,74 @@ class ClienteNarrativaTests(unittest.TestCase):
         pedido = self.cliente.open.call_args.args[0]
         self.assertEqual(pedido.full_url, "https://api.openai.com/v1/chat/completions")
         self.assertEqual(json.loads(pedido.data)["model"], "gpt-4.1-mini")
+
+    def enviar_estruturado(self, provedor="openrouter", formato=None):
+        formato = formato if formato is not None else {
+            "type": "json_schema", "json_schema": {
+                "name": "ligacoes", "strict": True,
+                "schema": {"type": "object", "properties": {
+                    "ligacoes": {"type": "array", "items": {"type": "string"}},
+                }, "required": ["ligacoes"], "additionalProperties": False},
+            },
+        }
+        return api._enviar_mensagens(
+            provedor=provedor, modelo="gpt-4.1-mini",
+            construtor=lambda: [{"role": "system", "content": "Responda somente em JSON."},
+                                {"role": "user", "content": self.TEXTO_PRIVADO}],
+            contexto={}, nome_contexto="avaliação das ligações", formato_resposta=formato,
+        )
+
+    def test_formato_json_schema_nao_modifica_mensagens_e_respeita_provedor(self):
+        self.conteudo({"choices": [{"finish_reason": "stop", "message": {"content": '{"ligacoes":[]}'}}]})
+        for provedor in ("openrouter", "openai"):
+            with self.subTest(provedor=provedor):
+                self.cliente.open.reset_mock()
+                self.assertEqual(self.enviar_estruturado(provedor), '{"ligacoes":[]}')
+                self.cliente.open.assert_called_once()
+                pedido = self.cliente.open.call_args.args[0]
+                corpo = json.loads(pedido.data)
+                formato = corpo["response_format"]
+                self.assertEqual(formato["type"], "json_schema")
+                self.assertIs(formato["json_schema"]["strict"], True)
+                self.assertEqual(corpo["messages"][1]["content"], self.TEXTO_PRIVADO)
+                self.assertNotIn(self.CHAVE_FICTICIA, pedido.data.decode())
+                self.assertEqual(pedido.get_header("Authorization"), f"Bearer {self.CHAVE_FICTICIA}")
+                if provedor == "openrouter":
+                    self.assertEqual(corpo["provider"], {"require_parameters": True})
+                else:
+                    self.assertNotIn("provider", corpo)
+                self.assertNotIn("max_tokens", corpo)
+
+    def test_formato_estruturado_invalido_nao_faz_pedido(self):
+        casos = ["json_schema", [], {"type": "xml"}, {"type": "json_schema", "valor": float("nan")}]
+        for formato in casos:
+            with self.subTest(formato=formato):
+                self.verificar_erro_seguro(lambda: self.enviar_estruturado(formato=formato))
+        self.cliente.open.assert_not_called()
+
+    def test_provedor_sem_suporte_estruturado_nao_tenta_outro_modelo_ou_formato(self):
+        for status in (400, 404, 422):
+            with self.subTest(status=status):
+                self.cliente.open.reset_mock()
+                self.cliente.open.side_effect = HTTPError(
+                    "https://openrouter.ai/api/v1/chat/completions", status,
+                    self.CHAVE_FICTICIA, {}, io.BytesIO(self.TEXTO_PRIVADO.encode()),
+                )
+                erro = self.verificar_erro_seguro(self.enviar_estruturado, "suporte a JSON Schema")
+                self.assertTrue(erro.__suppress_context__)
+                self.cliente.open.assert_called_once()
+
+    def test_resposta_estruturada_interrompida_recusada_ou_invalida_nao_e_repetida(self):
+        for payload, mensagem in (
+                ({"choices": [{"finish_reason": "length", "message": {"content": '{"ligacoes":['}}]}, "limite de tamanho"),
+                ({"choices": [{"finish_reason": "content_filter", "message": {"content": '{"ligacoes":[]}'}}]}, "recusou"),
+                ({"choices": [{"finish_reason": "stop", "message": {"refusal": self.TEXTO_PRIVADO, "content": '{"ligacoes":[]}'}}]}, "recusou"),
+                ({"choices": [{"finish_reason": "tool_calls", "message": {"content": '{"ligacoes":[]}'}}]}, "não concluiu")):
+            with self.subTest(mensagem=mensagem):
+                self.cliente.open.reset_mock()
+                self.conteudo(payload)
+                self.verificar_erro_seguro(self.enviar_estruturado, mensagem)
+                self.cliente.open.assert_called_once()
 
     def test_provedor_arbitrario_e_modelo_vazio_nao_fazem_pedidos(self):
         self.verificar_erro_seguro(lambda: self.gerar(provedor="https://outro.test/api"))

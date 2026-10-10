@@ -47,6 +47,9 @@ bash agente_analista/iniciar_mac_intel.sh
 ```
 
 Para outro modelo, ajuste `AGENTE_ANALISTA_MODELO` ao identificador do provedor.
+Escolha um modelo com suporte a respostas estruturadas por **JSON Schema**;
+o modelo padrão já oferece esse suporte. No OpenRouter, a requisição exige
+uma rota que respeite o formato solicitado.
 Uma `NARRATIVA_API_KEY` já exportada é aproveitada pelo iniciador. Não é preciso
 colar a chave em comandos ou arquivos. Arquivos `.env` não são carregados
 automaticamente.
@@ -124,7 +127,7 @@ quando a chamada de avaliação consegue alcançar o provedor.
   fragmentos. Cada bloco contribui uma vez por ranking. Os 12 melhores blocos
   distintos seguem com seu contexto inteiro para avaliação; nada é filtrado
   previamente por obra ou conceito. Os parâmetros saem no JSON.
-- `ligacoes.py` usa um prompt próprio com resposta JSON para propor relações,
+- `ligacoes.py` usa um prompt próprio e exige JSON Schema na API para propor relações,
   considerando o relato completo, negações, contexto, limites e alternativas.
   Intervalos de citações são oferecidos com posições já calculadas. O servidor
   rejeita passagens, IDs ou intervalos sem correspondência literal e associa
@@ -132,6 +135,12 @@ quando a chamada de avaliação consegue alcançar o provedor.
   Se os contextos excederem o limite de envio, candidatos inteiros são retirados
   do fim do ranking até o pedido caber. Os textos continuam intactos; o JSON e
   a inspeção registram quais blocos foram efetivamente avaliados.
+  O limite inclui o esquema JSON e os parâmetros de roteamento no pedido real.
+  Uma resposta inteiramente envolvida em um único bloco Markdown `json` também
+  pode ser lida, sem alterar o JSON ou suas citações. Respostas incompletas,
+  texto externo ao JSON, campos repetidos e valores inválidos são rejeitados.
+  A conferência das fontes continua obrigatória mesmo com JSON Schema; não há
+  novas tentativas automáticas ou troca automática de modelo.
 
 ## Examinar os resultados
 

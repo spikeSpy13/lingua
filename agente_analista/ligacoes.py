@@ -14,7 +14,7 @@ import re
 
 from api_narrativas import (
     ErroAPINarrativa, LIMITE_PEDIDO_BYTES, LIMITE_RESPOSTA_BYTES,
-    VARIAVEL_CHAVE, _enviar_mensagens,
+    VARIAVEL_CHAVE, _enviar_mensagens, _serializar_pedido,
 )
 
 
@@ -27,6 +27,42 @@ _CAMPOS_TEXTO = ("observacao", "ligacao", "justificativa", "limites")
 
 class ErroLigacoes(ValueError):
     """Problema com mensagem segura para exibição na página local."""
+
+
+def _formato_resposta():
+    """Exija JSON Schema na API; a literalidade das fontes é conferida depois."""
+    passagem = {
+        "type": "object", "additionalProperties": False,
+        "properties": {"inicio": {"type": "integer"}, "fim": {"type": "integer"}, "texto": {"type": "string"}},
+        "required": ["inicio", "fim", "texto"],
+    }
+    campos = {
+        "paragrafo": {"type": "string", "enum": ["P1", "P2"]},
+        "relato": copy.deepcopy(passagem),
+        "observacao": {"type": "string"},
+        "conceito": {"type": "string"},
+        "bloco_id": {"type": "string"},
+        "fragmentos_ids": {"type": "array", "items": {"type": "string"}},
+        "freud": copy.deepcopy(passagem),
+        "ligacao": {"type": "string"},
+        "justificativa": {"type": "string"},
+        "limites": {"type": "string"},
+        "alternativas": {"type": "array", "items": {"type": "string"}},
+        "situacao": {"type": "string", "enum": sorted(_SITUACOES)},
+    }
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "ligacoes_analista", "strict": True,
+            "schema": {
+                "type": "object", "additionalProperties": False, "required": ["ligacoes"],
+                "properties": {"ligacoes": {"type": "array", "items": {
+                    "type": "object", "additionalProperties": False,
+                    "properties": campos, "required": list(campos),
+                }}},
+            },
+        },
+    }
 
 
 def _configuracao(provedor=None, modelo=None):
@@ -274,7 +310,30 @@ def _constante_invalida(valor):
     raise ValueError("Constante não permitida em JSON")
 
 
-def _limitar_contexto(relato, recuperacao, modelo):
+def _ler_resposta(conteudo):
+    """Aceite JSON inteiro, puro ou cercado, sem reparar conteúdo do provedor."""
+    try:
+        if not isinstance(conteudo, str) or len(conteudo.encode("utf-8")) > LIMITE_RESPOSTA_BYTES:
+            raise ValueError("Resposta inválida ou muito grande")
+        texto = conteudo.strip()
+        cerca = re.fullmatch(r"```(?:json)?[ \t]*(?:\r\n|\n|\r)(.*?)(?:\r\n|\n|\r)```", texto,
+                             flags=re.DOTALL | re.IGNORECASE)
+        if cerca:
+            texto = cerca.group(1)
+        return json.loads(texto, object_pairs_hook=_objeto_sem_repeticoes, parse_constant=_constante_invalida)
+    except json.JSONDecodeError as erro:
+        raise ErroLigacoes(
+            f"O provedor retornou JSON inválido (linha {erro.lineno}, coluna {erro.colno}). "
+            "Use um modelo com suporte a JSON Schema; nenhuma ligação foi aceita."
+        ) from None
+    except (ValueError, TypeError, UnicodeError, RecursionError):
+        raise ErroLigacoes(
+            "O provedor retornou JSON inválido ou com campos repetidos. "
+            "Use um modelo com suporte a JSON Schema; nenhuma ligação foi aceita."
+        ) from None
+
+
+def _limitar_contexto(relato, recuperacao, modelo, provedor="openrouter"):
     """Remova fontes inteiras do fim do ranking, preservando cada contexto.
 
     A recuperação original continua intacta: o resultado registra precisamente
@@ -286,9 +345,9 @@ def _limitar_contexto(relato, recuperacao, modelo):
         enviada = {**recuperacao, "candidatos": selecionados}
         mensagens = construir_mensagens(relato=relato, recuperacao=enviada)
         try:
-            pedido = json.dumps({"model": modelo, "messages": mensagens, "stream": False, "n": 1},
-                                ensure_ascii=False, allow_nan=False).encode("utf-8")
-        except (TypeError, ValueError, UnicodeError):
+            pedido = _serializar_pedido(provedor=provedor, modelo=modelo, mensagens=mensagens,
+                                       formato_resposta=_formato_resposta())
+        except (ErroAPINarrativa, TypeError, ValueError, UnicodeError):
             raise ErroLigacoes("O contexto da avaliação contém texto inválido.") from None
         if len(pedido) <= LIMITE_PEDIDO_BYTES:
             removidos = originais[len(selecionados):]
@@ -326,24 +385,20 @@ def avaliar_ligacoes(relato, recuperacao, *, provedor=None, modelo=None, transpo
                 "mensagem": "Nenhum candidato foi recuperado para avaliação. Isso não demonstra ausência de material pertinente no acervo."}
     if transporte is None and not os.environ.get(VARIAVEL_CHAVE, "").strip():
         raise ErroLigacoes(f"Configure {VARIAVEL_CHAVE} no terminal do servidor antes de avaliar as ligações.")
-    recuperacao_enviada, avaliacao = _limitar_contexto(relato, recuperacao, modelo)
+    recuperacao_enviada, avaliacao = _limitar_contexto(relato, recuperacao, modelo, provedor)
     blocos = {identificador: blocos[identificador] for identificador in avaliacao["blocos_avaliados_ids"]}
     enviar = _enviar_mensagens if transporte is None else transporte
     if not callable(enviar):
         raise ErroLigacoes("O transporte da avaliação está indisponível.")
     try:
         conteudo = enviar(provedor=provedor, modelo=modelo, construtor=construir_mensagens,
-                          contexto={"relato": relato, "recuperacao": recuperacao_enviada}, nome_contexto="avaliação das ligações")
+                          contexto={"relato": relato, "recuperacao": recuperacao_enviada},
+                          nome_contexto="avaliação das ligações", formato_resposta=_formato_resposta())
     except ErroAPINarrativa as erro:
         raise ErroLigacoes(str(erro)) from None
     except (OSError, ValueError, TypeError):
         raise ErroLigacoes("Não foi possível concluir a avaliação das ligações. Verifique o provedor e tente novamente.") from None
-    try:
-        if not isinstance(conteudo, str) or len(conteudo.encode("utf-8")) > LIMITE_RESPOSTA_BYTES:
-            raise ValueError("Resposta inválida ou muito grande")
-        resposta = json.loads(conteudo, object_pairs_hook=_objeto_sem_repeticoes, parse_constant=_constante_invalida)
-    except (ValueError, TypeError, UnicodeError, RecursionError):
-        raise ErroLigacoes("O provedor retornou JSON inválido. Tente a avaliação novamente ou escolha outro modelo; nenhuma ligação foi inventada.") from None
+    resposta = _ler_resposta(conteudo)
     if not isinstance(resposta, dict) or not isinstance(resposta.get("ligacoes"), list) or len(resposta["ligacoes"]) > MAXIMO_LIGACOES:
         raise ErroLigacoes(f"O provedor não retornou a lista estruturada de até {MAXIMO_LIGACOES} ligações. Tente novamente ou escolha outro modelo.")
     resultado = {"ligacoes": [], "descartadas": [], "rejeitadas": [], "avaliacao": avaliacao, "mensagem": ""}

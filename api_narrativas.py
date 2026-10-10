@@ -305,7 +305,23 @@ def construir_mensagens_periodo(*, texto: str, prompt: str = "") -> list[dict]:
             {"role": "user", "content": json.dumps(contexto, ensure_ascii=False)}]
 
 
-def _enviar_mensagens(*, provedor, modelo, construtor, contexto, nome_contexto="narrativa") -> str:
+def _serializar_pedido(*, provedor, modelo, mensagens, formato_resposta=None) -> bytes:
+    """Construa o mesmo pedido usado no envio e no cálculo do limite de contexto."""
+    pedido = {"model": modelo, "messages": mensagens, "stream": False, "n": 1}
+    if formato_resposta is not None:
+        if not isinstance(formato_resposta, dict) or formato_resposta.get("type") not in ("json_schema", "json_object"):
+            raise ErroAPINarrativa("O formato estruturado da resposta está inválido.")
+        pedido["response_format"] = formato_resposta
+        if provedor == "openrouter":
+            # Encaminhe somente a provedores que respeitam o formato solicitado.
+            pedido["provider"] = {"require_parameters": True}
+    try:
+        return json.dumps(pedido, ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except (UnicodeEncodeError, ValueError, TypeError, RecursionError):
+        raise ErroAPINarrativa("O contexto da geração contém texto inválido.") from None
+
+
+def _enviar_mensagens(*, provedor, modelo, construtor, contexto, nome_contexto="narrativa", formato_resposta=None) -> str:
     """Compartilhe autenticação e transporte HTTPS, mantendo prompts independentes."""
     provedor = _provedor_valido(provedor)
     if not isinstance(modelo, str) or not modelo.strip() or len(modelo) > 200:
@@ -319,13 +335,8 @@ def _enviar_mensagens(*, provedor, modelo, construtor, contexto, nome_contexto="
         mensagens = construtor(**contexto)
     except TypeError:
         raise ErroAPINarrativa("O contexto da geração está incompleto ou é inválido.") from None
-    try:
-        corpo = json.dumps({
-            "model": modelo.strip(), "messages": mensagens, "stream": False,
-            "n": 1,
-        }, ensure_ascii=False).encode("utf-8")
-    except (UnicodeEncodeError, ValueError, TypeError):
-        raise ErroAPINarrativa("O contexto da geração contém texto inválido.") from None
+    corpo = _serializar_pedido(provedor=provedor, modelo=modelo.strip(), mensagens=mensagens,
+                              formato_resposta=formato_resposta)
     if len(corpo) > LIMITE_PEDIDO_BYTES:
         raise ErroAPINarrativa(f"O contexto da {nome_contexto} excedeu o tamanho permitido para geração.")
     pedido = Request(_ENDPOINTS[provedor], data=corpo, method="POST", headers={
@@ -339,6 +350,11 @@ def _enviar_mensagens(*, provedor, modelo, construtor, contexto, nome_contexto="
             dados = resposta.read(LIMITE_RESPOSTA_BYTES + 1)
     except HTTPError as erro:
         erro.close()
+        if formato_resposta is not None and erro.code in (400, 404, 422):
+            raise ErroAPINarrativa(
+                "O provedor não aceitou o pedido estruturado. Verifique a disponibilidade "
+                "do modelo selecionado e seu suporte a JSON Schema."
+            ) from None
         raise _erro_http(erro.code) from None
     except (URLError, OSError) as erro:
         raise _erro_conexao(erro) from None

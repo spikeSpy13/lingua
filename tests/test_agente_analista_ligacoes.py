@@ -6,6 +6,7 @@ import os
 import unittest
 from unittest.mock import Mock, patch
 
+import api_narrativas as api
 from api_narrativas import ErroAPINarrativa
 from agente_analista import ligacoes
 
@@ -198,14 +199,125 @@ class LigacoesTests(unittest.TestCase):
         self.assertEqual(dados["modelo"], "modelo-escolhido")
         self.assertIs(dados["construtor"], ligacoes.construir_mensagens)
         self.assertEqual(dados["contexto"]["relato"], self.relato)
+        self.assertEqual(dados["formato_resposta"], ligacoes._formato_resposta())
+
+    def test_esquema_exige_campos_e_objetos_sem_propriedades_extras(self):
+        formato = ligacoes._formato_resposta()
+        self.assertEqual(formato["type"], "json_schema")
+        self.assertIs(formato["json_schema"]["strict"], True)
+        esquema = formato["json_schema"]["schema"]
+
+        def conferir_objetos(valor):
+            if isinstance(valor, dict):
+                if valor.get("type") == "object":
+                    self.assertIs(valor["additionalProperties"], False)
+                    self.assertEqual(set(valor["required"]), set(valor["properties"]))
+                for filho in valor.values():
+                    conferir_objetos(filho)
+            elif isinstance(valor, list):
+                for filho in valor:
+                    conferir_objetos(filho)
+
+        conferir_objetos(esquema)
+        self.assertEqual(set(esquema["properties"]), {"ligacoes"})
+        item = esquema["properties"]["ligacoes"]["items"]
+        self.assertEqual(set(item["properties"]), set(self.item))
+        self.assertEqual(set(item["properties"]["paragrafo"]["enum"]), {"P1", "P2"})
+        self.assertEqual(set(item["properties"]["situacao"]["enum"]), ligacoes._SITUACOES)
+        for campo in ("relato", "freud"):
+            passagem = item["properties"][campo]["properties"]
+            self.assertEqual(set(passagem), {"inicio", "fim", "texto"})
+            self.assertEqual(passagem["inicio"]["type"], "integer")
+            self.assertEqual(passagem["fim"]["type"], "integer")
+            self.assertEqual(passagem["texto"]["type"], "string")
+
+    def test_pedido_https_usa_esquema_e_contagem_exata_de_bytes(self):
+        resposta = {"choices": [{"finish_reason": "stop", "message": {
+            "content": json.dumps({"ligacoes": [self.item]}, ensure_ascii=False),
+        }}]}
+        for provedor, modelo in (("openrouter", "openai/gpt-4.1-mini"), ("openai", "gpt-4.1-mini")):
+            with self.subTest(provedor=provedor), \
+                    patch.dict(os.environ, {api.VARIAVEL_CHAVE: "credencial-ficticia"}), \
+                    patch("api_narrativas.build_opener") as fabrica:
+                cliente = fabrica.return_value
+                cliente.open.return_value.__enter__.return_value.read.return_value = json.dumps(resposta).encode("utf-8")
+                resultado = ligacoes.avaliar_ligacoes(self.relato, self.recuperacao, provedor=provedor, modelo=modelo)
+                cliente.open.assert_called_once()
+                pedido = cliente.open.call_args.args[0]
+                corpo = json.loads(pedido.data)
+                self.assertEqual(corpo["response_format"], ligacoes._formato_resposta())
+                self.assertEqual(resultado["avaliacao"]["bytes_pedido"], len(pedido.data))
+                self.assertLessEqual(len(pedido.data), api.LIMITE_PEDIDO_BYTES)
+                self.assertEqual(len(resultado["ligacoes"]), 1)
+                if provedor == "openrouter":
+                    self.assertEqual(corpo["provider"], {"require_parameters": True})
+                else:
+                    self.assertNotIn("provider", corpo)
+
+    def test_json_puro_ou_uma_cerca_inteira_preservam_citacoes_literais(self):
+        conteudo = json.dumps({"ligacoes": [self.item]}, ensure_ascii=False)
+        formatos = [conteudo, "\n  " + conteudo + "\t\n",
+                    "```json\n" + conteudo + "\n```",
+                    "```\n" + conteudo + "\n```",
+                    " \t\n```json\r\n" + conteudo + "\r\n```\n "]
+        for formato in formatos:
+            with self.subTest(formato=formato[:20]):
+                transporte = Mock(return_value=formato)
+                resultado = self.avaliar(transporte=transporte)
+                transporte.assert_called_once()
+                self.assertEqual(len(resultado["ligacoes"]), 1)
+                self.assertEqual(resultado["ligacoes"][0]["relato"]["texto"], self.item["relato"]["texto"])
+                self.assertEqual(resultado["ligacoes"][0]["freud"]["texto"], self.item["freud"]["texto"])
+
+    def test_cerca_json_nao_corrige_citacao_alterada_ou_identificador_inventado(self):
+        for mudanca, motivo in (({"freud": {**self.item["freud"], "texto": "A lembranca retorna."}}, "literalmente"),
+                                ({"bloco_id": "B-INVENTADO"}, "não pertence"),
+                                ({"fragmentos_ids": ["F-INVENTADO"]}, "não pertencem")):
+            with self.subTest(mudanca=mudanca):
+                invalida = {**copy.deepcopy(self.item), **mudanca}
+                transporte = Mock(return_value="```json\n" + json.dumps({"ligacoes": [invalida]}) + "\n```")
+                resultado = self.avaliar(transporte=transporte)
+                transporte.assert_called_once()
+                self.assertFalse(resultado["ligacoes"])
+                self.assertEqual(len(resultado["rejeitadas"]), 1)
+                self.assertIn(motivo, resultado["rejeitadas"][0]["motivo"])
+
+    def test_limite_do_pedido_inclui_esquema_e_roteamento_antes_de_chamar_provedor(self):
+        mensagens = ligacoes.construir_mensagens(relato=self.relato, recuperacao=self.recuperacao)
+        comum = api._serializar_pedido(provedor="openrouter", modelo="gpt-4.1-mini", mensagens=mensagens)
+        estruturado = api._serializar_pedido(provedor="openrouter", modelo="gpt-4.1-mini", mensagens=mensagens,
+                                            formato_resposta=ligacoes._formato_resposta())
+        sem_roteamento = api._serializar_pedido(provedor="openai", modelo="gpt-4.1-mini", mensagens=mensagens,
+                                               formato_resposta=ligacoes._formato_resposta())
+        self.assertGreater(len(estruturado), len(sem_roteamento))
+        self.assertGreater(len(sem_roteamento), len(comum))
+        # O pedido comum caberia; o esquema e o roteamento ultrapassam o limite.
+        transporte = Mock(return_value='{"ligacoes":[]}')
+        with patch.object(ligacoes, "LIMITE_PEDIDO_BYTES", len(comum)):
+            with self.assertRaisesRegex(ligacoes.ErroLigacoes, "um único bloco excede"):
+                self.avaliar(transporte=transporte, modelo="gpt-4.1-mini")
+        transporte.assert_not_called()
 
     def test_json_malformado_e_formato_invalido_nao_geram_ligacoes_fabricadas(self):
-        casos = [None, "não é JSON", "```json\n{\"ligacoes\":[]}\n```", "[]", "{}",
+        casos = [None, "não é JSON", "[]", "{}",
                  '{"ligacoes":null}', '{"ligacoes":[],"ligacoes":[]}', '{"ligacoes":[],"valor":NaN}',
+                 '{"ligacoes":[],"valor":Infinity}', '{"ligacoes":[',
+                 '{"ligacoes":[]} {"ligacoes":[]}',
+                 'Comentário\n{"ligacoes":[]}', '{"ligacoes":[]}\nComentário',
+                 '```json\n{"ligacoes":[]}\n```\nComentário',
+                 'Comentário\n```json\n{"ligacoes":[]}\n```',
+                 '```json\n{"ligacoes":[]}\n```\n```json\n{"ligacoes":[]}\n```',
+                 '```python\n{"ligacoes":[]}\n```',
+                 '```json\n{"ligacoes":[],"ligacoes":[]}\n```',
+                 '```json\n{"ligacoes":[],"valor":NaN}\n```',
+                 '```json\n{"ligacoes":[\n```',
                  json.dumps({"ligacoes": [self.item] * 25})]
         for conteudo in casos:
-            with self.subTest(conteudo=str(conteudo)[:60]), self.assertRaises(ligacoes.ErroLigacoes):
-                self.avaliar(transporte=Mock(return_value=conteudo))
+            with self.subTest(conteudo=str(conteudo)[:60]):
+                transporte = Mock(return_value=conteudo)
+                with self.assertRaises(ligacoes.ErroLigacoes):
+                    self.avaliar(transporte=transporte)
+                transporte.assert_called_once()
 
     def test_falha_transporte_tem_mensagem_segura(self):
         with self.assertRaisesRegex(ligacoes.ErroLigacoes, "limite de solicitações"):
