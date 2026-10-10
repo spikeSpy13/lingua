@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import api_narrativas as api
+from agente_analista.app import ServicoAnalista
 from agente_analista.entrada import validar_relato
 from agente_analista import ligacoes
 
@@ -76,6 +77,30 @@ class CredenciaisTransporteTests(unittest.TestCase):
         self.assertEqual(json.loads(pedido.data)["model"], "fabricante/modelo-pagina")
         self.assertEqual(pedido.full_url, "https://openrouter.ai/api/v1/chat/completions")
         self.assertEqual(os.environ.copy(), antes)
+
+    def test_modelo_gratuito_catalogo_texto_preserva_modelo_chave_e_uma_chamada(self):
+        modelo = "nvidia/nemotron-3-ultra-550b-a55b:free"
+        servico = ServicoAnalista()
+        servico._corpus = Mock(return_value=object())
+        servico.buscador = Mock()
+        servico.buscador.buscar.return_value = self.recuperacao
+        with patch("agente_analista.modelos.escolher_formato_resposta", return_value="texto") as capacidades:
+            resultado = servico.executar(self.relato, Mock(), provedor="openrouter", modelo=modelo,
+                                         chave_api="credencial-pagina")
+        capacidades.assert_called_once_with("openrouter", modelo)
+        self.cliente.open.assert_called_once()
+        pedido = self.pedido_enviado()
+        corpo = json.loads(pedido.data)
+        self.assertEqual(corpo["model"], modelo)
+        self.assertEqual(pedido.get_header("Authorization"), "Bearer credencial-pagina")
+        self.assertNotIn("response_format", corpo)
+        self.assertNotIn("provider", corpo)
+        self.assertNotIn("n", corpo)
+        self.assertEqual(resultado["avaliacao"]["bytes_pedido"], len(pedido.data))
+        self.assertEqual(resultado["justificativas"], {
+            "provedor": "openrouter", "modelo": modelo, "formato_resposta": "texto"})
+        self.assertNotIn("credencial-pagina", json.dumps(resultado))
+        self.assertNotIn("NARRATIVA_API_KEY", os.environ)
 
     def test_chave_none_preserva_compatibilidade_do_transporte_legado(self):
         os.environ["NARRATIVA_API_KEY"] = "credencial-legada"

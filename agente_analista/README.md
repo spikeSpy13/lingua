@@ -44,8 +44,19 @@ A configuração é feita na página. OpenRouter aparece como provedor inicial;
 OpenAI também pode ser escolhido. Cada modelo adicionado pertence ao provedor
 selecionado, e a lista mostra somente os modelos desse provedor. Exemplos de
 identificadores: `openai/gpt-4.1-mini` no OpenRouter e `gpt-4.1-mini` na OpenAI.
-Escolha um modelo com suporte a respostas estruturadas por **JSON Schema**.
-No OpenRouter, a requisição exige uma rota que respeite o formato solicitado.
+Antes de buscar, o servidor consulta o catálogo público do OpenRouter para
+conferir o identificador e as capacidades do modelo selecionado. Se houver
+suporte a respostas estruturadas, usa **JSON Schema**; se houver somente modo
+JSON, usa um objeto JSON; nos demais modelos, solicita JSON pelas instruções.
+Todas as respostas passam pelas mesmas conferências locais de estrutura,
+citações e fontes. Modelos com o sufixo `:free` continuam com esse identificador;
+não há troca automática de modelo nem repetição da chamada de avaliação.
+
+A consulta ao catálogo não envia chave ou relato e não gera texto. As capacidades
+ficam em memória por cinco minutos. Se o catálogo estiver indisponível ou não
+informar as capacidades, a busca para com uma orientação específica. Para
+OpenAI, a avaliação continua usando JSON Schema. Quando um formato é exigido
+no OpenRouter, a requisição seleciona uma rota que respeite esse formato.
 
 Somente a lista de identificadores dos modelos é guardada no navegador. A
 chave fica no campo oculto enquanto a página está aberta e é enviada ao servidor
@@ -129,7 +140,9 @@ quando a chamada de avaliação consegue alcançar o provedor.
   fragmentos. Cada bloco contribui uma vez por ranking. Os 12 melhores blocos
   distintos seguem com seu contexto inteiro para avaliação; nada é filtrado
   previamente por obra ou conceito. Os parâmetros saem no JSON.
-- `ligacoes.py` usa um prompt próprio e exige JSON Schema na API para propor relações,
+- `modelos.py` consulta o catálogo do OpenRouter e ajusta o formato aceito pelo
+  modelo escolhido antes da busca, sem mudar seu identificador.
+- `ligacoes.py` usa um prompt próprio e o formato aceito pelo modelo para propor relações,
   considerando o relato completo, negações, contexto, limites e alternativas.
   Intervalos de citações são oferecidos com posições já calculadas. O servidor
   rejeita passagens, IDs ou intervalos sem correspondência literal e associa
@@ -141,8 +154,15 @@ quando a chamada de avaliação consegue alcançar o provedor.
   Uma resposta inteiramente envolvida em um único bloco Markdown `json` também
   pode ser lida, sem alterar o JSON ou suas citações. Respostas incompletas,
   texto externo ao JSON, campos repetidos e valores inválidos são rejeitados.
-  A conferência das fontes continua obrigatória mesmo com JSON Schema; não há
+  A conferência das fontes continua obrigatória em todos os formatos; não há
   novas tentativas automáticas ou troca automática de modelo.
+  Os pedidos OpenRouter não incluem o parâmetro redundante `n`; o retorno
+  continua limitado à conferência de uma única resposta completa.
+
+Erros de HTTP 400, 404 e 422 incluem o código e distinguem causas conhecidas,
+como modelo ausente, rota incompatível e contexto acima da janela do modelo.
+O corpo de erro do provedor é usado somente para essa classificação; não é
+mostrado na página ou escrito nos resultados.
 
 ## Examinar os resultados
 

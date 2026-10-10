@@ -29,8 +29,14 @@ class ErroLigacoes(ValueError):
     """Problema com mensagem segura para exibição na página local."""
 
 
-def _formato_resposta():
-    """Exija JSON Schema na API; a literalidade das fontes é conferida depois."""
+def _formato_resposta(modo="json_schema"):
+    """Use o formato aceito pelo modelo; confira a literalidade das fontes depois."""
+    if modo == "texto":
+        return None
+    if modo == "json_object":
+        return {"type": "json_object"}
+    if modo != "json_schema":
+        raise ErroLigacoes("O formato de resposta configurado para o modelo está inválido.")
     passagem = {
         "type": "object", "additionalProperties": False,
         "properties": {"inicio": {"type": "integer"}, "fim": {"type": "integer"}, "texto": {"type": "string"}},
@@ -325,16 +331,16 @@ def _ler_resposta(conteudo):
     except json.JSONDecodeError as erro:
         raise ErroLigacoes(
             f"O provedor retornou JSON inválido (linha {erro.lineno}, coluna {erro.colno}). "
-            "Use um modelo com suporte a JSON Schema; nenhuma ligação foi aceita."
+            "A resposta foi rejeitada na conferência; nenhuma ligação foi aceita."
         ) from None
     except (ValueError, TypeError, UnicodeError, RecursionError):
         raise ErroLigacoes(
             "O provedor retornou JSON inválido ou com campos repetidos. "
-            "Use um modelo com suporte a JSON Schema; nenhuma ligação foi aceita."
+            "A resposta foi rejeitada na conferência; nenhuma ligação foi aceita."
         ) from None
 
 
-def _limitar_contexto(relato, recuperacao, modelo, provedor="openrouter"):
+def _limitar_contexto(relato, recuperacao, modelo, provedor="openrouter", modo_resposta="json_schema"):
     """Remova fontes inteiras do fim do ranking, preservando cada contexto.
 
     A recuperação original continua intacta: o resultado registra precisamente
@@ -347,7 +353,7 @@ def _limitar_contexto(relato, recuperacao, modelo, provedor="openrouter"):
         mensagens = construir_mensagens(relato=relato, recuperacao=enviada)
         try:
             pedido = _serializar_pedido(provedor=provedor, modelo=modelo, mensagens=mensagens,
-                                       formato_resposta=_formato_resposta())
+                                       formato_resposta=_formato_resposta(modo_resposta))
         except (ErroAPINarrativa, TypeError, ValueError, UnicodeError):
             raise ErroLigacoes("O contexto da avaliação contém texto inválido.") from None
         if len(pedido) <= LIMITE_PEDIDO_BYTES:
@@ -360,6 +366,7 @@ def _limitar_contexto(relato, recuperacao, modelo, provedor="openrouter"):
                     if removidos else None
                 ),
                 "bytes_pedido": len(pedido),
+                "formato_resposta": modo_resposta,
             }
         if len(selecionados) == 1:
             raise ErroLigacoes(
@@ -370,7 +377,8 @@ def _limitar_contexto(relato, recuperacao, modelo, provedor="openrouter"):
     raise ErroLigacoes("Nenhum contexto está disponível para avaliação.")
 
 
-def avaliar_ligacoes(relato, recuperacao, *, provedor=None, modelo=None, transporte=None, chave_api=None):
+def avaliar_ligacoes(relato, recuperacao, *, provedor=None, modelo=None, transporte=None, chave_api=None,
+                    modo_resposta="json_schema"):
     """Proponha ligações e elimine referências e citações sem correspondência.
 
     ``transporte`` permite testar sem chamadas externas; recebe o mesmo contrato
@@ -379,17 +387,18 @@ def avaliar_ligacoes(relato, recuperacao, *, provedor=None, modelo=None, transpo
     """
     paragrafos, blocos = _fontes(relato, recuperacao)
     provedor, modelo = _configuracao(provedor, modelo)
+    formato_resposta = _formato_resposta(modo_resposta)
     if not blocos:
         return {"ligacoes": [], "descartadas": [], "rejeitadas": [],
                 "avaliacao": {"blocos_avaliados_ids": [], "blocos_nao_avaliados_ids": [],
-                              "motivo_limite_contexto": None, "bytes_pedido": 0},
+                              "motivo_limite_contexto": None, "bytes_pedido": 0, "formato_resposta": modo_resposta},
                 "mensagem": "Nenhum candidato foi recuperado para avaliação. Isso não demonstra ausência de material pertinente no acervo."}
     if transporte is None or chave_api is not None:
         try:
             chave_api = _obter_chave_api(chave_api)
         except ErroAPINarrativa as erro:
             raise ErroLigacoes(str(erro)) from None
-    recuperacao_enviada, avaliacao = _limitar_contexto(relato, recuperacao, modelo, provedor)
+    recuperacao_enviada, avaliacao = _limitar_contexto(relato, recuperacao, modelo, provedor, modo_resposta)
     blocos = {identificador: blocos[identificador] for identificador in avaliacao["blocos_avaliados_ids"]}
     enviar = _enviar_mensagens if transporte is None else transporte
     if not callable(enviar):
@@ -397,7 +406,7 @@ def avaliar_ligacoes(relato, recuperacao, *, provedor=None, modelo=None, transpo
     try:
         conteudo = enviar(provedor=provedor, modelo=modelo, construtor=construir_mensagens,
                           contexto={"relato": relato, "recuperacao": recuperacao_enviada},
-                          nome_contexto="avaliação das ligações", formato_resposta=_formato_resposta(), chave_api=chave_api)
+                          nome_contexto="avaliação das ligações", formato_resposta=formato_resposta, chave_api=chave_api)
     except ErroAPINarrativa as erro:
         raise ErroLigacoes(str(erro)) from None
     except (OSError, ValueError, TypeError):

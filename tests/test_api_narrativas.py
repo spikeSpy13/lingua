@@ -232,7 +232,7 @@ class ClienteNarrativaTests(unittest.TestCase):
         self.assertEqual(pedido.get_header("Authorization"), f"Bearer {self.CHAVE_FICTICIA}")
         self.assertEqual(corpo["model"], "openai/gpt-4.1-mini")
         self.assertFalse(corpo["stream"])
-        self.assertEqual(corpo["n"], 1)
+        self.assertNotIn("n", corpo)
         self.assertNotIn("max_tokens", corpo)
         self.assertNotIn("response_format", corpo)
         self.assertNotIn("provider", corpo)
@@ -271,6 +271,7 @@ class ClienteNarrativaTests(unittest.TestCase):
         pedido = self.cliente.open.call_args.args[0]
         self.assertEqual(pedido.full_url, "https://api.openai.com/v1/chat/completions")
         self.assertEqual(json.loads(pedido.data)["model"], "gpt-4.1-mini")
+        self.assertEqual(json.loads(pedido.data)["n"], 1)
 
     def enviar_estruturado(self, provedor="openrouter", formato=None):
         formato = formato if formato is not None else {
@@ -305,8 +306,10 @@ class ClienteNarrativaTests(unittest.TestCase):
                 self.assertEqual(pedido.get_header("Authorization"), f"Bearer {self.CHAVE_FICTICIA}")
                 if provedor == "openrouter":
                     self.assertEqual(corpo["provider"], {"require_parameters": True})
+                    self.assertNotIn("n", corpo)
                 else:
                     self.assertNotIn("provider", corpo)
+                    self.assertEqual(corpo["n"], 1)
                 self.assertNotIn("max_tokens", corpo)
 
     def test_formato_estruturado_invalido_nao_faz_pedido(self):
@@ -324,8 +327,46 @@ class ClienteNarrativaTests(unittest.TestCase):
                     "https://openrouter.ai/api/v1/chat/completions", status,
                     self.CHAVE_FICTICIA, {}, io.BytesIO(self.TEXTO_PRIVADO.encode()),
                 )
-                erro = self.verificar_erro_seguro(self.enviar_estruturado, "suporte a JSON Schema")
+                erro = self.verificar_erro_seguro(self.enviar_estruturado, "formato de resposta solicitado")
                 self.assertTrue(erro.__suppress_context__)
+                self.cliente.open.assert_called_once()
+
+    def test_rejeicao_distingue_modelo_contexto_e_rota_sem_reproduzir_corpo(self):
+        casos = [
+            (404, {"message": "No endpoints found for modelo. " + self.TEXTO_PRIVADO}, "modelo não foi encontrado"),
+            (404, {"message": "No endpoints found that support the requested parameters. " + self.CHAVE_FICTICIA}, "rota disponível"),
+            (400, {"code": "context_length_exceeded", "message": self.TEXTO_PRIVADO}, "janela do modelo"),
+            (422, {"code": "unsupported_response_format", "message": self.TEXTO_PRIVADO}, "rota disponível"),
+            (400, {"message": "Unsupported parameter n. " + self.CHAVE_FICTICIA}, "parâmetro"),
+            (400, {"metadata": {"raw": json.dumps({"message": "Maximum context length. " + self.TEXTO_PRIVADO})}}, "janela do modelo"),
+        ]
+        for status, detalhe, esperado in casos:
+            with self.subTest(status=status, esperado=esperado):
+                self.cliente.open.reset_mock()
+                corpo = io.BytesIO(json.dumps({"error": detalhe}).encode("utf-8"))
+                self.cliente.open.side_effect = HTTPError(
+                    "https://openrouter.ai/api/v1/chat/completions", status, self.CHAVE_FICTICIA, {}, corpo,
+                )
+                erro = self.verificar_erro_seguro(self.enviar_estruturado, esperado)
+                self.assertIn(f"HTTP {status}", str(erro))
+                self.assertTrue(corpo.closed)
+                self.cliente.open.assert_called_once()
+
+    def test_diagnostico_ignora_corpo_privado_malformado_extenso_ou_ilegivel(self):
+        class CorpoIlegivel(io.BytesIO):
+            def read(self, tamanho=-1):
+                raise OSError("corpo privado ilegível")
+
+        for corpo in (io.BytesIO(self.TEXTO_PRIVADO.encode()), io.BytesIO(b"\xff"),
+                      io.BytesIO(b"x" * (api.LIMITE_ERRO_HTTP_BYTES + 1)), CorpoIlegivel()):
+            with self.subTest(tipo=type(corpo).__name__):
+                self.cliente.open.reset_mock()
+                self.cliente.open.side_effect = HTTPError(
+                    "https://openrouter.ai/api/v1/chat/completions", 400, self.CHAVE_FICTICIA, {}, corpo,
+                )
+                erro = self.verificar_erro_seguro(self.enviar_estruturado, "HTTP 400")
+                self.assertNotIn("corpo privado", str(erro))
+                self.assertTrue(corpo.closed)
                 self.cliente.open.assert_called_once()
 
     def test_resposta_estruturada_interrompida_recusada_ou_invalida_nao_e_repetida(self):

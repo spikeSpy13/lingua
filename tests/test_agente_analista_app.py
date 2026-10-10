@@ -248,15 +248,38 @@ class ConfiguracaoTests(unittest.TestCase):
             servico._corpus = Mock(return_value=object())
             servico.buscador = Mock()
             servico.buscador.buscar.return_value = recuperacao
-            with patch("agente_analista.ligacoes.avaliar_ligacoes", return_value={"ligacoes": []}) as avaliar:
-                resultado = servico.executar(relato, Mock(), provedor="openai", modelo="modelo-pagina",
-                                             chave_api="credencial-pagina")
-            avaliar.assert_called_once_with(relato, recuperacao, provedor="openai", modelo="modelo-pagina",
-                                             chave_api="credencial-pagina")
-            self.assertEqual(resultado["justificativas"], {"provedor": "openai", "modelo": "modelo-pagina"})
-            self.assertNotIn("credencial-pagina", json.dumps(resultado))
-            self.assertNotIn("credencial-servidor", json.dumps(resultado))
+            for modo in ("json_schema", "json_object", "texto"):
+                with self.subTest(modo=modo), \
+                        patch("agente_analista.modelos.escolher_formato_resposta", return_value=modo) as escolher, \
+                        patch("agente_analista.ligacoes.avaliar_ligacoes", return_value={"ligacoes": []}) as avaliar:
+                    resultado = servico.executar(relato, Mock(), provedor="openai", modelo="modelo-pagina",
+                                                 chave_api="credencial-pagina")
+                escolher.assert_called_once_with("openai", "modelo-pagina")
+                avaliar.assert_called_once_with(relato, recuperacao, provedor="openai", modelo="modelo-pagina",
+                                                 chave_api="credencial-pagina", modo_resposta=modo)
+                self.assertEqual(resultado["justificativas"], {"provedor": "openai", "modelo": "modelo-pagina",
+                                                               "formato_resposta": modo})
+                self.assertNotIn("credencial-pagina", json.dumps(resultado))
+                self.assertNotIn("credencial-servidor", json.dumps(resultado))
             self.assertEqual(os.environ["NARRATIVA_API_KEY"], "credencial-servidor")
+
+    def test_capacidades_indisponiveis_interrompem_servico_antes_da_busca_e5(self):
+        from agente_analista.ligacoes import ErroLigacoes
+        from agente_analista.modelos import ErroModelo
+
+        relato = validar_relato("Sonho com a casa.\n\nA lembrança retorna.")
+        servico = ServicoAnalista()
+        servico._corpus = Mock()
+        servico.buscador = Mock()
+        with patch("agente_analista.modelos.escolher_formato_resposta",
+                   side_effect=ErroModelo("Não foi possível conferir as capacidades do modelo.")) as escolher:
+            with self.assertRaisesRegex(ErroLigacoes, "capacidades") as erro:
+                servico.executar(relato, Mock(), provedor="openrouter",
+                    modelo="nvidia/nemotron-3-ultra-550b-a55b:free", chave_api="credencial-pagina")
+        escolher.assert_called_once_with("openrouter", "nvidia/nemotron-3-ultra-550b-a55b:free")
+        servico.buscador.buscar.assert_not_called()
+        servico._corpus.assert_not_called()
+        self.assertNotIn("credencial-pagina", str(erro.exception))
 
     def test_configuracao_malformada_mostra_acao_sem_falhar_pagina(self):
         with TemporaryDirectory() as pasta:
@@ -301,7 +324,8 @@ class IntegracaoE5Tests(unittest.TestCase):
         def transporte(**pedido):
             self.assertEqual(pedido["chave_api"], "chave-somente-pagina")
             self.assertEqual(pedido["provedor"], "openrouter")
-            self.assertEqual(pedido["modelo"], "openai/modelo-teste")
+            self.assertEqual(pedido["modelo"], "nvidia/nemotron-3-ultra-550b-a55b:free")
+            self.assertIsNone(pedido["formato_resposta"])
             contexto = pedido["contexto"]
             relato = contexto["relato"]
             fonte = contexto["recuperacao"]["candidatos"][0]
@@ -319,6 +343,7 @@ class IntegracaoE5Tests(unittest.TestCase):
             return json.dumps({"ligacoes": [ligacao, inventada]}, ensure_ascii=False)
 
         with patch.dict(os.environ, {"NARRATIVA_API_KEY": "chave-somente-teste"}), \
+                patch("agente_analista.modelos.escolher_formato_resposta", return_value="texto") as escolher, \
                 patch("agente_analista.ligacoes._enviar_mensagens", side_effect=transporte):
             app = criar_app({"TESTING": True})
             try:
@@ -326,7 +351,7 @@ class IntegracaoE5Tests(unittest.TestCase):
                 self.assertTrue(client.get("/api/status").get_json()["pronto"])
                 texto = "Sonho e desejo.\n \t\nVolto a pensar no sonho."
                 resposta = client.post("/api/buscas", json={"texto": texto, "provedor": "openrouter",
-                                      "modelo": "openai/modelo-teste", "chave_api": "chave-somente-pagina"})
+                                      "modelo": "nvidia/nemotron-3-ultra-550b-a55b:free", "chave_api": "chave-somente-pagina"})
                 self.assertEqual(resposta.status_code, 202)
                 id = resposta.get_json()["id"]
                 limite = time.monotonic() + 90
@@ -338,7 +363,9 @@ class IntegracaoE5Tests(unittest.TestCase):
                 self.assertEqual(tarefa["estado"], "concluido", tarefa.get("erro"))
                 resultado = tarefa["resultado"]
                 self.assertEqual(resultado["relato"]["texto"], texto)
-                self.assertEqual(resultado["justificativas"], {"provedor": "openrouter", "modelo": "openai/modelo-teste"})
+                self.assertEqual(resultado["justificativas"], {"provedor": "openrouter",
+                    "modelo": "nvidia/nemotron-3-ultra-550b-a55b:free", "formato_resposta": "texto"})
+                escolher.assert_called_once_with("openrouter", "nvidia/nemotron-3-ultra-550b-a55b:free")
                 self.assertNotIn("chave-somente-pagina", json.dumps(resultado))
                 self.assertTrue(resultado["ligacoes"][0]["conferencias"]["freud_literal"])
                 self.assertEqual(len(resultado["rejeitadas"]), 1)

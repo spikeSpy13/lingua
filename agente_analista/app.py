@@ -78,17 +78,24 @@ class ServicoAnalista:
 
     def executar(self, relato, progresso, *, provedor, modelo, chave_api):
         from .busca import Buscador
-        from .ligacoes import avaliar_ligacoes
+        from .ligacoes import ErroLigacoes, avaliar_ligacoes
+        from .modelos import ErroModelo, escolher_formato_resposta
         from embeddings_e5 import criar_gerador_padrao
+        progresso("Conferindo o modelo das justificativas")
+        try:
+            modo_resposta = escolher_formato_resposta(provedor, modelo)
+        except ErroModelo as erro:
+            raise ErroLigacoes(str(erro)) from None
         progresso("Conferindo o corpus e carregando o modelo E5")
         corpus = self._corpus()
         if self.buscador is None:
             self.buscador = Buscador(corpus, criar_gerador_padrao(caminho_config=self.caminho_config))
         recuperacao = self.buscador.buscar(relato, progresso=progresso)
         progresso("Avaliando os candidatos e conferindo as citações")
-        ligacoes = avaliar_ligacoes(relato, recuperacao, provedor=provedor, modelo=modelo, chave_api=chave_api)
+        ligacoes = avaliar_ligacoes(relato, recuperacao, provedor=provedor, modelo=modelo,
+                                   chave_api=chave_api, modo_resposta=modo_resposta)
         return {"relato": relato, **recuperacao, **ligacoes,
-                "justificativas": {"provedor": provedor, "modelo": modelo},
+                "justificativas": {"provedor": provedor, "modelo": modelo, "formato_resposta": modo_resposta},
                 "posicoes": "Pontos de código Unicode, início inclusivo e fim exclusivo [inicio, fim).",
                 "aviso": "Pontuações ordenam candidatos; a pertinência interpretativa exige revisão."}
 

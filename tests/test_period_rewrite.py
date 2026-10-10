@@ -230,7 +230,7 @@ class PeriodRewriteIntegrationTests(unittest.TestCase):
         body = json.loads(request.data)
         self.assertEqual(body["model"], api.MODELO_PADRAO)
         self.assertEqual(body["stream"], False)
-        self.assertEqual(body["n"], 1)
+        self.assertNotIn("n", body)
         context = json.loads(body["messages"][1]["content"])
         self.assertEqual(context, {"texto_original": self.period["texto"], "instrucoes": api.PROMPT_PADRAO_PERIODO})
         self.assertNotIn(self.FAKE_KEY, repr(body))

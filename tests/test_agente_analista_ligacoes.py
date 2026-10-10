@@ -231,28 +231,80 @@ class LigacoesTests(unittest.TestCase):
             self.assertEqual(passagem["fim"]["type"], "integer")
             self.assertEqual(passagem["texto"]["type"], "string")
 
+    def test_formatos_de_resposta_possiveis_e_modo_desconhecido_rejeitado(self):
+        self.assertEqual(ligacoes._formato_resposta("json_schema"), ligacoes._formato_resposta())
+        self.assertEqual(ligacoes._formato_resposta("json_object"), {"type": "json_object"})
+        self.assertIsNone(ligacoes._formato_resposta("texto"))
+        for modo in ("invalido", None, {}, 42):
+            transporte = Mock(return_value='{"ligacoes":[]}')
+            with self.subTest(modo=modo), self.assertRaises(ligacoes.ErroLigacoes):
+                self.avaliar(transporte=transporte, modo_resposta=modo)
+            transporte.assert_not_called()
+
     def test_pedido_https_usa_esquema_e_contagem_exata_de_bytes(self):
         resposta = {"choices": [{"finish_reason": "stop", "message": {
             "content": json.dumps({"ligacoes": [self.item]}, ensure_ascii=False),
         }}]}
-        for provedor, modelo in (("openrouter", "openai/gpt-4.1-mini"), ("openai", "gpt-4.1-mini")):
-            with self.subTest(provedor=provedor), \
+        casos = [(provedor, modelo, modo)
+                 for provedor, modelo in (("openrouter", "nvidia/nemotron-3-ultra-550b-a55b:free"), ("openai", "gpt-4.1-mini"))
+                 for modo in ("json_schema", "json_object", "texto")]
+        for provedor, modelo, modo in casos:
+            with self.subTest(provedor=provedor, modo=modo), \
                     patch.dict(os.environ, {api.VARIAVEL_CHAVE: "credencial-ficticia"}), \
                     patch("api_narrativas.build_opener") as fabrica:
                 cliente = fabrica.return_value
                 cliente.open.return_value.__enter__.return_value.read.return_value = json.dumps(resposta).encode("utf-8")
-                resultado = ligacoes.avaliar_ligacoes(self.relato, self.recuperacao, provedor=provedor, modelo=modelo)
+                resultado = ligacoes.avaliar_ligacoes(self.relato, self.recuperacao, provedor=provedor,
+                    modelo=modelo, chave_api="credencial-pagina", modo_resposta=modo)
                 cliente.open.assert_called_once()
                 pedido = cliente.open.call_args.args[0]
                 corpo = json.loads(pedido.data)
-                self.assertEqual(corpo["response_format"], ligacoes._formato_resposta())
+                self.assertEqual(corpo["model"], modelo)
+                self.assertEqual(pedido.get_header("Authorization"), "Bearer credencial-pagina")
+                self.assertFalse(corpo["stream"])
+                if modo == "texto":
+                    self.assertNotIn("response_format", corpo)
+                else:
+                    self.assertEqual(corpo["response_format"], ligacoes._formato_resposta(modo))
                 self.assertEqual(resultado["avaliacao"]["bytes_pedido"], len(pedido.data))
                 self.assertLessEqual(len(pedido.data), api.LIMITE_PEDIDO_BYTES)
                 self.assertEqual(len(resultado["ligacoes"]), 1)
                 if provedor == "openrouter":
-                    self.assertEqual(corpo["provider"], {"require_parameters": True})
+                    self.assertNotIn("n", corpo)
+                    if modo == "texto":
+                        self.assertNotIn("provider", corpo)
+                    else:
+                        self.assertEqual(corpo["provider"], {"require_parameters": True})
                 else:
+                    self.assertEqual(corpo["n"], 1)
                     self.assertNotIn("provider", corpo)
+
+    def test_todos_formatos_preservam_conferencia_de_citacoes_e_ids_sem_retry(self):
+        inventada = {**copy.deepcopy(self.item), "bloco_id": "B-INVENTADO"}
+        citacao_alterada = {**copy.deepcopy(self.item), "freud": {**self.item["freud"], "texto": "A lembranca retorna."}}
+        fragmento_inventado = {**copy.deepcopy(self.item), "fragmentos_ids": ["F-INVENTADO"]}
+        conteudo = json.dumps({"ligacoes": [self.item, inventada, citacao_alterada, fragmento_inventado]}, ensure_ascii=False)
+        for modo in ("json_schema", "json_object", "texto"):
+            with self.subTest(modo=modo):
+                transporte = Mock(return_value=conteudo)
+                resultado = self.avaliar(transporte=transporte, modo_resposta=modo,
+                    modelo="nvidia/nemotron-3-ultra-550b-a55b:free", chave_api="credencial-pagina")
+                transporte.assert_called_once()
+                self.assertEqual(transporte.call_args.kwargs["modelo"], "nvidia/nemotron-3-ultra-550b-a55b:free")
+                self.assertEqual(transporte.call_args.kwargs["chave_api"], "credencial-pagina")
+                self.assertEqual(transporte.call_args.kwargs["formato_resposta"], ligacoes._formato_resposta(modo))
+                self.assertEqual(len(resultado["ligacoes"]), 1)
+                self.assertTrue(all(resultado["ligacoes"][0]["conferencias"].values()))
+                self.assertEqual(len(resultado["rejeitadas"]), 3)
+                self.assertNotIn("credencial-pagina", json.dumps(resultado))
+
+    def test_texto_livre_continua_exigindo_json_valido_sem_reparar_ou_retry(self):
+        for conteudo in ("Comentário antes do JSON\n" + json.dumps({"ligacoes": [self.item]}),
+                         '{"ligacoes":[]}{"ligacoes":[]}', '{"ligacoes":'):
+            transporte = Mock(return_value=conteudo)
+            with self.subTest(conteudo=conteudo[:30]), self.assertRaises(ligacoes.ErroLigacoes):
+                self.avaliar(transporte=transporte, modo_resposta="texto")
+            transporte.assert_called_once()
 
     def test_json_puro_ou_uma_cerca_inteira_preservam_citacoes_literais(self):
         conteudo = json.dumps({"ligacoes": [self.item]}, ensure_ascii=False)

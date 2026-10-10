@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import ssl
 from urllib.error import HTTPError, URLError
@@ -21,6 +22,7 @@ TIMEOUT_SEGUNDOS = 60
 LIMITE_RESPOSTA_BYTES = 1024 * 1024
 LIMITE_PEDIDO_BYTES = 256 * 1024
 LIMITE_PROMPT_PERIODO = 8000
+LIMITE_ERRO_HTTP_BYTES = 16 * 1024
 PROMPT_PADRAO_PERIODO = (
     "Revise e reescreva o período, melhorando a clareza, a fluidez e a correção gramatical, "
     "sem alterar o sentido original."
@@ -257,6 +259,57 @@ def _erro_http(status: int) -> ErroAPINarrativa:
     return ErroAPINarrativa(mensagem)
 
 
+def _erro_pedido(erro, *, estruturado=False):
+    """Classifique uma rejeição sem reproduzir dados ou mensagens do provedor."""
+    partes = []
+    try:
+        dados = erro.read(LIMITE_ERRO_HTTP_BYTES + 1)
+        if isinstance(dados, bytes) and len(dados) <= LIMITE_ERRO_HTTP_BYTES:
+            resposta = json.loads(dados.decode("utf-8"))
+            detalhe = resposta.get("error") if isinstance(resposta, dict) else None
+            if isinstance(detalhe, dict):
+                for campo in ("code", "type", "param", "message"):
+                    if isinstance(detalhe.get(campo), str):
+                        partes.append(detalhe[campo].casefold())
+                metadados = detalhe.get("metadata")
+                if isinstance(metadados, dict) and isinstance(metadados.get("raw"), str):
+                    partes.append(metadados["raw"].casefold())
+    except (OSError, ValueError, TypeError, AttributeError, UnicodeError, RecursionError):
+        pass
+    finally:
+        erro.close()
+    detalhe = " ".join(partes)
+    if any(texto in detalhe for texto in (
+            "context_length_exceeded", "maximum context length", "context window",
+            "context length", "too many input tokens", "input is too long")):
+        mensagem = (
+            "O contexto enviado excede a janela do modelo escolhido. "
+            "Selecione um modelo com capacidade para contextos maiores; as fontes não foram truncadas."
+        )
+    elif any(texto in detalhe for texto in (
+            "unsupported_response_format", "invalid_json_schema", "no endpoints found that support",
+            "does not support json", "doesn't support json", "unsupported json")) or (
+            "response_format" in detalhe and re.search(r"not supported|unsupported|not available", detalhe)):
+        mensagem = (
+            "Não há uma rota disponível que aceite o formato de resposta deste modelo. "
+            "Confira as permissões e as preferências de provedores da conta ou selecione outro modelo."
+        )
+    elif any(texto in detalhe for texto in (
+            "model_not_found", "invalid model", "not a valid model", "not found for model",
+            "no endpoints found for", "unknown model", "model does not exist")):
+        mensagem = "O modelo não foi encontrado ou está indisponível. Confira seu identificador no provedor selecionado."
+    elif re.search(r"unsupported (?:parameter|argument)|(?:parameter|argument).*(?:not supported|unsupported)", detalhe):
+        mensagem = "A rota do modelo rejeitou um parâmetro do pedido. Selecione outra rota ou outro modelo disponível."
+    elif estruturado:
+        mensagem = (
+            "O provedor não aceitou o pedido estruturado. Verifique a disponibilidade "
+            "do modelo selecionado e seu suporte ao formato de resposta solicitado."
+        )
+    else:
+        mensagem = "O provedor não aceitou o pedido. Verifique o modelo selecionado e sua disponibilidade."
+    return ErroAPINarrativa(f"{mensagem} (HTTP {erro.code}).")
+
+
 def _interpretar_resposta(dados: bytes) -> str:
     if len(dados) > LIMITE_RESPOSTA_BYTES:
         raise ErroAPINarrativa("A resposta do provedor excedeu o tamanho permitido.")
@@ -307,7 +360,9 @@ def construir_mensagens_periodo(*, texto: str, prompt: str = "") -> list[dict]:
 
 def _serializar_pedido(*, provedor, modelo, mensagens, formato_resposta=None) -> bytes:
     """Construa o mesmo pedido usado no envio e no cálculo do limite de contexto."""
-    pedido = {"model": modelo, "messages": mensagens, "stream": False, "n": 1}
+    pedido = {"model": modelo, "messages": mensagens, "stream": False}
+    if provedor == "openai":
+        pedido["n"] = 1
     if formato_resposta is not None:
         if not isinstance(formato_resposta, dict) or formato_resposta.get("type") not in ("json_schema", "json_object"):
             raise ErroAPINarrativa("O formato estruturado da resposta está inválido.")
@@ -359,12 +414,9 @@ def _enviar_mensagens(*, provedor, modelo, construtor, contexto, nome_contexto="
         with cliente.open(pedido, timeout=TIMEOUT_SEGUNDOS) as resposta:
             dados = resposta.read(LIMITE_RESPOSTA_BYTES + 1)
     except HTTPError as erro:
+        if erro.code in (400, 404, 422):
+            raise _erro_pedido(erro, estruturado=formato_resposta is not None) from None
         erro.close()
-        if formato_resposta is not None and erro.code in (400, 404, 422):
-            raise ErroAPINarrativa(
-                "O provedor não aceitou o pedido estruturado. Verifique a disponibilidade "
-                "do modelo selecionado e seu suporte a JSON Schema."
-            ) from None
         raise _erro_http(erro.code) from None
     except (URLError, OSError) as erro:
         raise _erro_conexao(erro) from None
