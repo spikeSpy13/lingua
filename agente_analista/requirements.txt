@@ -1,0 +1,2 @@
+# Dependências da página; o E5 usa o ambiente preparado para Mac Intel.
+Flask==3.1.3

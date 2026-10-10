@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>Agente analista · Relato e Freud</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+  </head>
+  <body>
+    <div class="page">
+      <header class="page-header">
+        <div class="brand"><span class="brand-mark" aria-hidden="true">a</span> Agente analista <span class="local-tag">teste local</span></div>
+        <p class="eyebrow">Leitura e consulta ao acervo</p>
+        <h1>Ligações entre relato e Freud</h1>
+        <p class="intro">Examine passagens do seu relato ao lado de fontes teóricas, justificativas e limites. Cada ligação é uma proposta para sua revisão.</p>
+      </header>
+
+      <section class="environment" aria-labelledby="environment-title">
+        <div class="environment-heading">
+          <h2 id="environment-title">Ambiente de busca</h2>
+          <span id="environment-badge" class="badge badge-neutral">Conferindo…</span>
+        </div>
+        <p id="environment-description" class="muted">Conferindo o acervo e os modelos disponíveis.</p>
+        <div id="environment-problems" hidden></div>
+        <button id="refresh-status" class="button button-small button-secondary" type="button">Conferir novamente</button>
+      </section>
+
+      <main>
+        <section class="input-card" aria-labelledby="input-title">
+          <div class="section-heading"><span class="step-number" aria-hidden="true">01</span><div><h2 id="input-title">Seu relato</h2><p class="muted">Dois parágrafos, separados por uma linha em branco. Até 400 palavras no total.</p></div></div>
+          <form id="search-form" novalidate>
+            <label for="relato">Texto do relato</label>
+            <textarea id="relato" name="relato" rows="10" spellcheck="true" aria-describedby="input-help input-counts input-error" placeholder="Cole o primeiro parágrafo aqui.&#10;&#10;Cole o segundo parágrafo aqui."></textarea>
+            <p id="input-help" class="field-help">O texto será preservado como recebido. A busca considera os dois parágrafos e o relato completo. Para avaliar as ligações, o relato e os trechos recuperados serão enviados ao provedor de IA configurado.</p>
+            <div class="input-meta">
+              <div id="input-counts" class="counts" aria-live="polite" aria-atomic="true"><span id="word-count">0 / 400 palavras</span><span id="paragraph-count">0 / 2 parágrafos</span></div>
+              <span class="field-help">Sem mínimo de palavras</span>
+            </div>
+            <p id="input-error" class="field-error" role="alert" hidden></p>
+            <div class="form-actions">
+              <button id="search-button" class="button button-primary" type="submit" disabled>Buscar ligações <span aria-hidden="true">→</span></button>
+              <button id="clear-button" class="button button-secondary" type="button">Limpar</button>
+            </div>
+          </form>
+          <div id="processing" class="processing" role="status" aria-live="polite" hidden><span id="processing-spinner" class="spinner" aria-hidden="true"></span><div><p id="processing-title">Preparando a busca</p><p id="processing-detail" class="muted">Aguarde enquanto o relato é examinado.</p></div></div>
+          <p id="request-error" class="field-error request-error" role="alert" hidden></p>
+        </section>
+
+        <section id="results" class="results" aria-labelledby="results-title" hidden>
+          <div class="results-heading">
+            <div class="section-heading"><span class="step-number" aria-hidden="true">02</span><div><h2 id="results-title" tabindex="-1">Tabela de ligações</h2><p id="results-summary" class="muted"></p></div></div>
+            <div class="export-actions"><button id="copy-button" class="button button-secondary" type="button">Copiar tabela</button><button id="export-button" class="button button-secondary" type="button">Exportar JSON</button></div>
+          </div>
+          <p class="review-note">As citações são conferidas automaticamente com as fontes. A pertinência das interpretações precisa da sua revisão. As pontuações de busca ordenam candidatos e não representam probabilidades de uma interpretação estar correta.</p>
+          <p id="result-message" class="result-message" hidden></p>
+          <div id="connections-table"></div>
+          <p id="export-feedback" class="field-help" role="status" aria-live="polite"></p>
+          <details id="discarded-section" class="inspection" hidden><summary id="discarded-summary">Relações descartadas</summary><p class="muted inspection-intro">Candidatos examinados cuja relação não foi considerada suficiente. Eles ficam disponíveis para inspeção.</p><div id="discarded-table"></div></details>
+          <details id="rejected-section" class="inspection" hidden><summary id="rejected-summary">Propostas rejeitadas na conferência</summary><p class="muted inspection-intro">Essas propostas falharam nas conferências de textos, posições ou fontes e não foram incluídas na tabela.</p><ul id="rejected-list"></ul></details>
+          <details id="retrieval-section" class="inspection" hidden><summary>Inspecionar candidatos recuperados</summary><p class="muted inspection-intro">Fontes encontradas na busca antes da avaliação das ligações.</p><p id="retrieval-method" class="field-help"></p><div id="retrieval-candidates"></div></details>
+        </section>
+      </main>
+      <footer>Esta etapa termina na tabela. A busca apresenta fontes para discussão e não produz conclusões clínicas.</footer>
+      <noscript><p class="field-error">Ative o JavaScript do navegador para usar a busca nesta página.</p></noscript>
+    </div>
+  </body>
+</html>
