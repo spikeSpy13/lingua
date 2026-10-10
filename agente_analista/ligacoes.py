@@ -14,7 +14,7 @@ import re
 
 from api_narrativas import (
     ErroAPINarrativa, LIMITE_PEDIDO_BYTES, LIMITE_RESPOSTA_BYTES,
-    VARIAVEL_CHAVE, _enviar_mensagens, _serializar_pedido,
+    VARIAVEL_CHAVE, _enviar_mensagens, _obter_chave_api, _serializar_pedido,
 )
 
 
@@ -70,7 +70,8 @@ def _configuracao(provedor=None, modelo=None):
     if not isinstance(provedor, str) or provedor not in _MODELOS:
         raise ErroLigacoes("Configure AGENTE_ANALISTA_PROVEDOR como openrouter ou openai.")
     modelo = modelo if modelo is not None else os.environ.get("AGENTE_ANALISTA_MODELO", _MODELOS[provedor])
-    if not isinstance(modelo, str) or not modelo.strip() or len(modelo) > 200:
+    if (not isinstance(modelo, str) or len(modelo) > 200
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}", modelo.strip()) is None):
         raise ErroLigacoes("Configure AGENTE_ANALISTA_MODELO com um modelo válido do provedor escolhido.")
     return provedor, modelo.strip()
 
@@ -369,7 +370,7 @@ def _limitar_contexto(relato, recuperacao, modelo, provedor="openrouter"):
     raise ErroLigacoes("Nenhum contexto está disponível para avaliação.")
 
 
-def avaliar_ligacoes(relato, recuperacao, *, provedor=None, modelo=None, transporte=None):
+def avaliar_ligacoes(relato, recuperacao, *, provedor=None, modelo=None, transporte=None, chave_api=None):
     """Proponha ligações e elimine referências e citações sem correspondência.
 
     ``transporte`` permite testar sem chamadas externas; recebe o mesmo contrato
@@ -383,8 +384,11 @@ def avaliar_ligacoes(relato, recuperacao, *, provedor=None, modelo=None, transpo
                 "avaliacao": {"blocos_avaliados_ids": [], "blocos_nao_avaliados_ids": [],
                               "motivo_limite_contexto": None, "bytes_pedido": 0},
                 "mensagem": "Nenhum candidato foi recuperado para avaliação. Isso não demonstra ausência de material pertinente no acervo."}
-    if transporte is None and not os.environ.get(VARIAVEL_CHAVE, "").strip():
-        raise ErroLigacoes(f"Configure {VARIAVEL_CHAVE} no terminal do servidor antes de avaliar as ligações.")
+    if transporte is None or chave_api is not None:
+        try:
+            chave_api = _obter_chave_api(chave_api)
+        except ErroAPINarrativa as erro:
+            raise ErroLigacoes(str(erro)) from None
     recuperacao_enviada, avaliacao = _limitar_contexto(relato, recuperacao, modelo, provedor)
     blocos = {identificador: blocos[identificador] for identificador in avaliacao["blocos_avaliados_ids"]}
     enviar = _enviar_mensagens if transporte is None else transporte
@@ -393,7 +397,7 @@ def avaliar_ligacoes(relato, recuperacao, *, provedor=None, modelo=None, transpo
     try:
         conteudo = enviar(provedor=provedor, modelo=modelo, construtor=construir_mensagens,
                           contexto={"relato": relato, "recuperacao": recuperacao_enviada},
-                          nome_contexto="avaliação das ligações", formato_resposta=_formato_resposta())
+                          nome_contexto="avaliação das ligações", formato_resposta=_formato_resposta(), chave_api=chave_api)
     except ErroAPINarrativa as erro:
         raise ErroLigacoes(str(erro)) from None
     except (OSError, ValueError, TypeError):

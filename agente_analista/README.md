@@ -16,13 +16,16 @@ bash agente_analista/iniciar_mac_intel.sh
 
 O iniciador usa o E5 que você já preparou, instala as dependências da página
 (Flask 3.1.3 e Certifi 2026.7.22) quando necessário, testa a conexão HTTPS
-com uma consulta pública e solicita a chave do OpenRouter com entrada
-oculta. Cole a chave e pressione Enter; ela permanece somente no processo do
-servidor, sem ser escrita no repositório ou enviada ao navegador.
+com uma consulta pública e abre o servidor sem pedir uma chave no terminal.
 
 Abra **http://127.0.0.1:5002** no navegador. Deixe o terminal aberto enquanto usa
 a página; pressione `Ctrl+C` para encerrar. A primeira busca carrega o E5 na
 memória; as seguintes reutilizam o modelo e o índice.
+
+Na seção **Justificativas**, escolha o provedor, cole a chave de API no campo
+oculto e use **+** para incluir o identificador de um modelo. O seletor começa
+sem modelo selecionado, sem modelos predefinidos. Ao incluir um modelo, ele
+é selecionado para a próxima busca. Informe o relato e clique em **Buscar ligações**.
 
 Se ainda não preparou o modelo, instale Python 3.12 e execute antes:
 
@@ -35,37 +38,34 @@ O modelo fica em `instance/huggingface`, o ambiente Python em
 `instance/agente_analista_e5.json`. O acervo já está vetorizado: a busca gera
 somente os vetores das consultas.
 
-### Provedor das justificativas
+### Chave e modelo das justificativas
 
-Reutilizamos o transporte e a credencial `NARRATIVA_API_KEY` do projeto. O padrão
-é OpenRouter com `openai/gpt-4.1-mini`; para usar a chave da OpenAI:
+A configuração é feita na página. OpenRouter aparece como provedor inicial;
+OpenAI também pode ser escolhido. Cada modelo adicionado pertence ao provedor
+selecionado, e a lista mostra somente os modelos desse provedor. Exemplos de
+identificadores: `openai/gpt-4.1-mini` no OpenRouter e `gpt-4.1-mini` na OpenAI.
+Escolha um modelo com suporte a respostas estruturadas por **JSON Schema**.
+No OpenRouter, a requisição exige uma rota que respeite o formato solicitado.
 
-```bash
-export AGENTE_ANALISTA_PROVEDOR=openai
-export AGENTE_ANALISTA_MODELO=gpt-4.1-mini
-bash agente_analista/iniciar_mac_intel.sh
-```
-
-Para outro modelo, ajuste `AGENTE_ANALISTA_MODELO` ao identificador do provedor.
-Escolha um modelo com suporte a respostas estruturadas por **JSON Schema**;
-o modelo padrão já oferece esse suporte. No OpenRouter, a requisição exige
-uma rota que respeite o formato solicitado.
-Uma `NARRATIVA_API_KEY` já exportada é aproveitada pelo iniciador. Não é preciso
-colar a chave em comandos ou arquivos. Arquivos `.env` não são carregados
-automaticamente.
+Somente a lista de identificadores dos modelos é guardada no navegador. A
+chave fica no campo oculto enquanto a página está aberta e é enviada ao servidor
+local para cada busca. Não é gravada em arquivos, no armazenamento do navegador
+ou nos resultados exportados; ao recarregar a página, o campo começa vazio.
+Não há necessidade de configurar variáveis no terminal. A configuração enviada
+na página é usada somente naquela busca, sem alterar as credenciais do projeto
+Lingua ou as variáveis de ambiente do servidor.
 
 O E5 e o índice funcionam localmente. Para construir as justificativas, o
 provedor recebe o relato e os blocos recuperados por HTTPS; essa chamada usa
-a conta do provedor e pode consumir créditos. Sem chave, a página informa a
-configuração necessária e não inventa análises. Os relatos e resultados ficam
+a conta do provedor e pode consumir créditos. A busca é liberada após informar
+a chave, selecionar o modelo e preencher um relato válido. Os relatos e resultados ficam
 somente em memória no servidor, com até oito buscas e disponibilidade por uma
 hora. Resultados expirados são removidos nos próximos acessos; encerrar o
 servidor libera todos eles. O usuário pode salvar o resultado por **Exportar JSON**.
 
 ### Executar diretamente no ambiente Python
 
-Depois de instalar `agente_analista/requirements.txt` no ambiente com E5 e
-configurar a chave no processo:
+Depois de instalar `agente_analista/requirements.txt` no ambiente com E5:
 
 ```bash
 instance/venv-agente-e5-intel/bin/python -m agente_analista.app
@@ -77,7 +77,9 @@ Usa uma execução por vez e mostra o progresso na página. Configure o cache vi
 
 ### Diagnosticar a conexão com o provedor
 
-O iniciador executa um diagnóstico público antes de pedir a chave. O teste
+O iniciador executa um diagnóstico público do provedor padrão ao abrir o servidor.
+Esse teste usa OpenRouter por padrão; a escolha do provedor das buscas é feita
+na página. O teste
 apenas consulta o endereço do provedor por GET, sem autenticação, envio do
 relato ou geração de texto; não consome créditos. Para executá-lo separadamente:
 
@@ -171,7 +173,8 @@ AGENTE_ANALISTA_TESTE_E5_REAL=1 instance/venv-agente-e5-intel/bin/python -m unit
 
 Os testes verificam limites de entrada, preservação Unicode e posições,
 integridade e reconstrução do corpus, busca e agrupamento, citações e IDs
-inexistentes, relações sem sustentação e o fluxo assíncrono. As respostas do
+inexistentes, relações sem sustentação, o fluxo assíncrono e a separação das
+credenciais de cada busca. As respostas do
 provedor são simuladas nos testes para evitar chamadas cobradas. O teste E5
 opcional executa inferência real na revisão local do modelo.
 

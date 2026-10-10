@@ -8,7 +8,7 @@ from threading import Event
 import time
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from agente_analista.app import ServicoAnalista, criar_app
 from agente_analista.entrada import ErroEntrada, contar_relato, validar_relato
@@ -63,13 +63,17 @@ class ServicoTeste:
         self.iniciou = Event()
         self.liberar = Event()
         self.relato = None
+        self.credenciais = None
+        self.pedidos = []
         self.falhar = False
 
     def status(self):
-        return {"pronto": True, "problemas": [], "provedor": {"chave_configurada": True}}
+        return {"pronto": True, "problemas": []}
 
-    def executar(self, relato, progresso):
+    def executar(self, relato, progresso, *, provedor, modelo, chave_api):
         self.relato = relato
+        self.credenciais = {"provedor": provedor, "modelo": modelo, "chave_api": chave_api}
+        self.pedidos.append(self.credenciais.copy())
         self.iniciou.set()
         progresso("Conferindo citações")
         if not self.liberar.wait(5):
@@ -97,6 +101,12 @@ class PaginaTests(unittest.TestCase):
             time.sleep(.01)
         self.fail("A busca não terminou.")
 
+    def pedido(self, texto="a\n\nb", **alteracoes):
+        dados = {"texto": texto, "provedor": "openrouter", "modelo": "openai/modelo-teste",
+                 "chave_api": "credencial-somente-pagina"}
+        dados.update(alteracoes)
+        return dados
+
     def test_pagina_e_acoes(self):
         resposta = self.client.get("/")
         self.assertEqual(resposta.status_code, 200)
@@ -113,13 +123,13 @@ class PaginaTests(unittest.TestCase):
 
     def test_progresso_preservacao_e_envio_duplicado(self):
         texto = "Não sonho 😀.\r\n \t\r\nLembro da infância."
-        resposta = self.client.post("/api/buscas", json={"texto": texto})
+        resposta = self.client.post("/api/buscas", json=self.pedido(texto))
         self.assertEqual(resposta.status_code, 202)
         id = resposta.get_json()["id"]
         self.assertTrue(self.servico.iniciou.wait(1))
         progresso = self.client.get(f"/api/buscas/{id}").get_json()
         self.assertEqual(progresso["estado"], "executando")
-        self.assertEqual(self.client.post("/api/buscas", json={"texto": texto}).status_code, 409)
+        self.assertEqual(self.client.post("/api/buscas", json=self.pedido(texto)).status_code, 409)
         self.servico.liberar.set()
         resultado = self.aguardar(id)
         self.assertEqual(resultado["estado"], "concluido")
@@ -128,7 +138,7 @@ class PaginaTests(unittest.TestCase):
     def test_falha_segura(self):
         self.servico.falhar = True
         self.servico.liberar.set()
-        id = self.client.post("/api/buscas", json={"texto": "a\n\nb"}).get_json()["id"]
+        id = self.client.post("/api/buscas", json=self.pedido()).get_json()["id"]
         resposta = self.aguardar(id)
         self.assertEqual(resposta["estado"], "erro")
         self.assertNotIn("privado", resposta["erro"])
@@ -139,10 +149,84 @@ class PaginaTests(unittest.TestCase):
         self.assertEqual(self.client.get("/", headers={"Host": "externo.example"}).status_code, 403)
 
     def test_falta_configuracao_acao_visivel(self):
-        self.servico.status = lambda: {"pronto": False, "problemas": ["Configure NARRATIVA_API_KEY."]}
-        resposta = self.client.post("/api/buscas", json={"texto": "a\n\nb"})
+        self.servico.status = lambda: {"pronto": False, "problemas": ["Prepare o modelo E5."]}
+        resposta = self.client.post("/api/buscas", json=self.pedido())
         self.assertEqual(resposta.status_code, 503)
-        self.assertIn("NARRATIVA_API_KEY", resposta.get_json()["erro"])
+        self.assertIn("E5", resposta.get_json()["erro"])
+
+    def test_credenciais_ausentes_invalidas_nao_iniciam_nem_usam_env(self):
+        casos = []
+        for campo in ("chave_api", "provedor", "modelo"):
+            ausente = self.pedido()
+            del ausente[campo]
+            casos.append(ausente)
+            for valor in (None, "", "   ", [], 42):
+                casos.append(self.pedido(**{campo: valor}))
+        casos.extend(self.pedido(provedor=valor) for valor in ("invalido", "OpenRouter", "https://externo.example"))
+        casos.extend(self.pedido(chave_api=valor) for valor in ("não-ascii", "chave com espaços", "chave\r\nHeader:valor", "chave\x7f"))
+        casos.extend(self.pedido(modelo=valor) for valor in ("x" * 201, "modelo\r\ninjetado"))
+        with patch.dict(os.environ, {"NARRATIVA_API_KEY": "credencial-do-servidor",
+                                     "AGENTE_ANALISTA_PROVEDOR": "openai",
+                                     "AGENTE_ANALISTA_MODELO": "modelo-servidor"}):
+            for dados in casos:
+                with self.subTest(dados=dados):
+                    resposta = self.client.post("/api/buscas", json=dados)
+                    self.assertEqual(resposta.status_code, 400)
+                    serializado = resposta.get_data(as_text=True)
+                    self.assertNotIn("credencial-do-servidor", serializado)
+                    self.assertNotIn("credencial-somente-pagina", serializado)
+                    self.assertFalse(self.servico.iniciou.is_set())
+                    self.assertEqual(self.app.extensions["agente_analista"]["tarefas"], {})
+
+    def test_recebe_credenciais_da_pagina_sem_guardar_em_tarefas_ou_resposta(self):
+        self.servico.liberar.set()
+        dados = self.pedido()
+        resposta = self.client.post("/api/buscas", json=dados)
+        self.assertEqual(resposta.status_code, 202)
+        resultado = self.aguardar(resposta.get_json()["id"])
+        self.assertEqual(self.servico.credenciais, {k: dados[k] for k in ("provedor", "modelo", "chave_api")})
+        self.assertNotIn(dados["chave_api"], json.dumps(resultado))
+        self.assertNotIn(dados["chave_api"], json.dumps(self.app.extensions["agente_analista"]["tarefas"]))
+        self.assertNotIn("chave_api", json.dumps(resultado))
+
+    def test_buscas_sucessivas_credenciais_independentes_sem_alterar_env(self):
+        self.servico.liberar.set()
+        with patch.dict(os.environ, {"NARRATIVA_API_KEY": "credencial-servidor-intacta",
+                                     "AGENTE_ANALISTA_PROVEDOR": "openrouter",
+                                     "AGENTE_ANALISTA_MODELO": "modelo-servidor-intacto"}):
+            ambiente = os.environ.copy()
+            primeiro = self.pedido(chave_api="credencial-primeira", modelo="fabricante/modelo-um")
+            segundo = self.pedido(provedor="openai", chave_api="credencial-segunda", modelo="modelo-dois")
+            for dados in (primeiro, segundo):
+                resposta = self.client.post("/api/buscas", json=dados)
+                self.assertEqual(resposta.status_code, 202)
+                tarefa = self.aguardar(resposta.get_json()["id"])
+                self.assertEqual(tarefa["estado"], "concluido")
+                self.assertNotIn(dados["chave_api"], json.dumps(tarefa))
+            self.assertEqual(self.servico.pedidos, [
+                {k: dados[k] for k in ("provedor", "modelo", "chave_api")} for dados in (primeiro, segundo)])
+            self.assertEqual(os.environ.copy(), ambiente)
+
+    def test_erros_conhecidos_nao_revelam_chave_recebida(self):
+        from agente_analista.ligacoes import ErroLigacoes
+
+        def falhar(relato, progresso, *, provedor, modelo, chave_api):
+            raise ErroLigacoes("Falha ao usar " + chave_api)
+
+        self.servico.executar = falhar
+        dados = self.pedido()
+        resposta = self.client.post("/api/buscas", json=dados)
+        tarefa = self.aguardar(resposta.get_json()["id"])
+        self.assertEqual(tarefa["estado"], "erro")
+        self.assertNotIn(dados["chave_api"], json.dumps(tarefa))
+        self.assertNotIn(dados["chave_api"], json.dumps(self.app.extensions["agente_analista"]["tarefas"]))
+
+    def test_status_nunca_retorna_chave(self):
+        with patch.dict(os.environ, {"NARRATIVA_API_KEY": "credencial-privada-no-ambiente"}):
+            resposta = self.client.get("/api/status")
+        self.assertEqual(resposta.status_code, 200)
+        self.assertTrue(resposta.get_json()["pronto"])
+        self.assertNotIn("credencial-privada-no-ambiente", resposta.get_data(as_text=True))
 
     def test_id_inexistente(self):
         self.assertEqual(self.client.get("/api/buscas/nao-existe").status_code, 404)
@@ -156,6 +240,24 @@ class PaginaTests(unittest.TestCase):
 
 
 class ConfiguracaoTests(unittest.TestCase):
+    def test_servico_encaminha_credenciais_da_busca_sem_inclui_las_no_resultado(self):
+        relato = validar_relato("Sonho com a casa.\n\nA lembrança retorna.")
+        recuperacao = {"consultas": [], "candidatos": []}
+        with patch.dict(os.environ, {"NARRATIVA_API_KEY": "credencial-servidor"}):
+            servico = ServicoAnalista()
+            servico._corpus = Mock(return_value=object())
+            servico.buscador = Mock()
+            servico.buscador.buscar.return_value = recuperacao
+            with patch("agente_analista.ligacoes.avaliar_ligacoes", return_value={"ligacoes": []}) as avaliar:
+                resultado = servico.executar(relato, Mock(), provedor="openai", modelo="modelo-pagina",
+                                             chave_api="credencial-pagina")
+            avaliar.assert_called_once_with(relato, recuperacao, provedor="openai", modelo="modelo-pagina",
+                                             chave_api="credencial-pagina")
+            self.assertEqual(resultado["justificativas"], {"provedor": "openai", "modelo": "modelo-pagina"})
+            self.assertNotIn("credencial-pagina", json.dumps(resultado))
+            self.assertNotIn("credencial-servidor", json.dumps(resultado))
+            self.assertEqual(os.environ["NARRATIVA_API_KEY"], "credencial-servidor")
+
     def test_configuracao_malformada_mostra_acao_sem_falhar_pagina(self):
         with TemporaryDirectory() as pasta:
             caminho = Path(pasta) / "config.json"
@@ -169,11 +271,37 @@ class ConfiguracaoTests(unittest.TestCase):
                     self.assertIn("preparar_e5_mac_intel.sh", " ".join(status["problemas"]))
                     self.assertNotIn("segredo-teste", json.dumps(status))
 
+    def test_status_pronto_sem_chave_api_ou_modelo_do_provedor_no_ambiente(self):
+        with TemporaryDirectory() as pasta, patch.dict(os.environ, {}, clear=True):
+            cache = Path(pasta) / "cache"
+            os.environ["HF_HUB_CACHE"] = str(cache)
+            manifesto = {"modelo": "fabricante/e5", "revisao": "revisao-fixa"}
+            snapshot = cache / "models--fabricante--e5/snapshots/revisao-fixa"
+            snapshot.mkdir(parents=True)
+            for nome in ("config.json", "model.safetensors", "tokenizer.json", "tokenizer_config.json"):
+                (snapshot / nome).touch()
+            caminho = Path(pasta) / "config.json"
+            caminho.write_text(json.dumps({"modelo_id": manifesto["modelo"], "revisao": manifesto["revisao"],
+                "tokenizador_id": manifesto["modelo"], "tokenizador_revisao": manifesto["revisao"],
+                "local_files_only": True, "dispositivo": "cpu", "precisao": "float32", "limite_tokens": 512}),
+                encoding="utf-8")
+            servico = ServicoAnalista(caminho_config=caminho)
+            servico._corpus = lambda: SimpleNamespace(fragmentos=[{}], blocos={"B1": {}}, manifesto=manifesto)
+            for extras in ({}, {"AGENTE_ANALISTA_PROVEDOR": "invalido", "AGENTE_ANALISTA_MODELO": ""}):
+                with self.subTest(extras=extras), patch.dict(os.environ, extras):
+                    status = servico.status()
+                    self.assertTrue(status["pronto"], status["problemas"])
+                    self.assertEqual(status["problemas"], [])
+                    self.assertEqual(status["corpus"], {"fragmentos": 1, "blocos": 1})
+
 
 @unittest.skipUnless(os.environ.get("AGENTE_ANALISTA_TESTE_E5_REAL") == "1", "Inferência real E5 opcional")
 class IntegracaoE5Tests(unittest.TestCase):
     def test_busca_da_pagina_com_e5_real_e_provedor_simulado(self):
         def transporte(**pedido):
+            self.assertEqual(pedido["chave_api"], "chave-somente-pagina")
+            self.assertEqual(pedido["provedor"], "openrouter")
+            self.assertEqual(pedido["modelo"], "openai/modelo-teste")
             contexto = pedido["contexto"]
             relato = contexto["relato"]
             fonte = contexto["recuperacao"]["candidatos"][0]
@@ -197,7 +325,8 @@ class IntegracaoE5Tests(unittest.TestCase):
                 client = app.test_client()
                 self.assertTrue(client.get("/api/status").get_json()["pronto"])
                 texto = "Sonho e desejo.\n \t\nVolto a pensar no sonho."
-                resposta = client.post("/api/buscas", json={"texto": texto})
+                resposta = client.post("/api/buscas", json={"texto": texto, "provedor": "openrouter",
+                                      "modelo": "openai/modelo-teste", "chave_api": "chave-somente-pagina"})
                 self.assertEqual(resposta.status_code, 202)
                 id = resposta.get_json()["id"]
                 limite = time.monotonic() + 90
@@ -209,6 +338,8 @@ class IntegracaoE5Tests(unittest.TestCase):
                 self.assertEqual(tarefa["estado"], "concluido", tarefa.get("erro"))
                 resultado = tarefa["resultado"]
                 self.assertEqual(resultado["relato"]["texto"], texto)
+                self.assertEqual(resultado["justificativas"], {"provedor": "openrouter", "modelo": "openai/modelo-teste"})
+                self.assertNotIn("chave-somente-pagina", json.dumps(resultado))
                 self.assertTrue(resultado["ligacoes"][0]["conferencias"]["freud_literal"])
                 self.assertEqual(len(resultado["rejeitadas"]), 1)
                 self.assertEqual(len(resultado["candidatos"]), 12)

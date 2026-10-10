@@ -1,6 +1,6 @@
 """Prompts e comunicação com provedores para narrativas e revisão de períodos.
 
-A chave fica exclusivamente em NARRATIVA_API_KEY, no processo do servidor.
+A chave vem de NARRATIVA_API_KEY ou é fornecida para uma chamada específica.
 O módulo não persiste credenciais e não faz tentativas automáticas.
 """
 
@@ -321,16 +321,26 @@ def _serializar_pedido(*, provedor, modelo, mensagens, formato_resposta=None) ->
         raise ErroAPINarrativa("O contexto da geração contém texto inválido.") from None
 
 
-def _enviar_mensagens(*, provedor, modelo, construtor, contexto, nome_contexto="narrativa", formato_resposta=None) -> str:
+def _obter_chave_api(chave_api=None):
+    """Valide a chave desta chamada; None preserva a configuração narrativa."""
+    chave = os.environ.get(VARIAVEL_CHAVE, "") if chave_api is None else chave_api
+    if not isinstance(chave, str):
+        raise ErroAPINarrativa("Informe uma chave de API válida.")
+    chave = chave.strip()
+    if not chave:
+        raise ErroAPINarrativa(f"Configure {VARIAVEL_CHAVE} ou informe a chave de API antes de gerar o texto.")
+    if len(chave) > 4096 or not chave.isascii() or any(not 33 <= ord(caractere) <= 126 for caractere in chave):
+        raise ErroAPINarrativa(f"A configuração de {VARIAVEL_CHAVE} ou da chave de API é inválida. Verifique a credencial.")
+    return chave
+
+
+def _enviar_mensagens(*, provedor, modelo, construtor, contexto, nome_contexto="narrativa", formato_resposta=None,
+                     chave_api=None) -> str:
     """Compartilhe autenticação e transporte HTTPS, mantendo prompts independentes."""
     provedor = _provedor_valido(provedor)
     if not isinstance(modelo, str) or not modelo.strip() or len(modelo) > 200:
         raise ErroAPINarrativa("Informe um modelo válido para a geração.")
-    chave = os.environ.get(VARIAVEL_CHAVE, "").strip()
-    if not chave:
-        raise ErroAPINarrativa(f"Configure {VARIAVEL_CHAVE} no ambiente do servidor antes de gerar o texto.")
-    if not chave.isascii() or any(caractere.isspace() or ord(caractere) < 33 for caractere in chave):
-        raise ErroAPINarrativa(f"A configuração de {VARIAVEL_CHAVE} é inválida. Verifique a credencial no ambiente.")
+    chave = _obter_chave_api(chave_api)
     try:
         mensagens = construtor(**contexto)
     except TypeError:

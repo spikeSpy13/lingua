@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Execute na pasta do repositório; a credencial permanece só neste processo.
+# Execute na pasta do repositório; configure chave e modelo na página local.
 set -euo pipefail
 AGENTE_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$AGENTE_SCRIPT_DIR/.."
@@ -18,13 +18,6 @@ export MKL_NUM_THREADS="${MKL_NUM_THREADS:-2}"
 export AGENTE_ANALISTA_PROVEDOR="${AGENTE_ANALISTA_PROVEDOR:-openrouter}"
 if ! "$AGENTE_PYTHON" -m agente_analista.diagnosticar_conexao; then
   echo "A página será aberta; resolva o problema de conexão indicado antes de buscar ligações." >&2
-fi
-if [[ -z "${NARRATIVA_API_KEY:-}" ]]; then
-  if [[ -t 0 ]]; then
-    read -r -s -p "Chave de API do $AGENTE_ANALISTA_PROVEDOR (entrada oculta; Enter abre a página sem configurar a API): " NARRATIVA_API_KEY
-    printf '\n'
-    export NARRATIVA_API_KEY
-  fi
 fi
 echo "Abra http://127.0.0.1:5002 no navegador. Para encerrar, pressione Ctrl+C."
 exec "$AGENTE_PYTHON" -m agente_analista.app

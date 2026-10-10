@@ -15,10 +15,16 @@
     "results-summary", "result-message", "connections-table", "copy-button", "export-button", "export-feedback",
     "discarded-section", "discarded-summary", "discarded-table", "rejected-section", "rejected-summary",
     "rejected-list", "retrieval-section", "retrieval-method", "retrieval-candidates",
+    "provider-select", "api-key", "model-select", "add-model-button", "add-model-panel", "new-model-id",
+    "save-model-button", "cancel-model-button", "new-model-error", "configuration-error", "model-feedback",
   ].map((id) => [id, $(id)]));
+  const modelsStorageKey = "agente-analista-modelos-v1";
+  const modelIdentifier = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/u;
   let ready = false;
   let busy = false;
   let touched = false;
+  let configurationTouched = false;
+  let savedModels = readModels();
   let currentResult = null;
   let currentJob = null;
   let pollTimer = null;
@@ -39,6 +45,88 @@
     return element;
   };
 
+  function readModels() {
+    try {
+      const stored = JSON.parse(localStorage.getItem(modelsStorageKey) || "[]");
+      if (!Array.isArray(stored)) return [];
+      const unique = new Set();
+      return stored.filter((entry) => {
+        if (!entry || !["openrouter", "openai"].includes(entry.provedor) || typeof entry.modelo !== "string" || !modelIdentifier.test(entry.modelo)) return false;
+        const identity = `${entry.provedor}:${entry.modelo}`;
+        if (unique.has(identity)) return false;
+        unique.add(identity);
+        return true;
+      }).map(({ provedor, modelo }) => ({ provedor, modelo }));
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function renderModels(selected = "") {
+    const models = savedModels.filter((entry) => entry.provedor === elements["provider-select"].value);
+    const placeholder = node("option", models.length ? "Selecione um modelo" : "Inclua um modelo pelo botão +");
+    placeholder.value = "";
+    elements["model-select"].replaceChildren(placeholder);
+    models.forEach(({ modelo }) => {
+      const option = node("option", modelo);
+      option.value = modelo;
+      elements["model-select"].append(option);
+    });
+    elements["model-select"].value = selected;
+    elements["new-model-id"].placeholder = elements["provider-select"].value === "openrouter" ? "Ex.: openai/gpt-4.1-mini" : "Ex.: gpt-4.1-mini";
+  }
+
+  function configurationState() {
+    const hasModel = Boolean(elements["model-select"].value);
+    const key = elements["api-key"].value.trim();
+    const hasKey = Boolean(key);
+    const validKey = /^[\x21-\x7e]{1,4096}$/u.test(key);
+    const error = !hasModel ? "Inclua e selecione um modelo para a justificativa." : !hasKey ? "Informe a chave de API do provedor escolhido." : !validKey ? "Confira a chave de API: cole somente a chave, sem espaços no meio ou outros textos." : "";
+    elements["configuration-error"].textContent = error;
+    elements["configuration-error"].hidden = !configurationTouched || !error;
+    elements["model-select"].setAttribute("aria-invalid", String(configurationTouched && !hasModel));
+    elements["api-key"].setAttribute("aria-invalid", String(configurationTouched && !validKey));
+    return { error, hasModel, hasKey };
+  }
+
+  function invalidateConfiguration() {
+    configurationTouched = true;
+    resetResults();
+    elements["request-error"].hidden = true;
+    updateInput();
+  }
+
+  function closeModelPanel(returnFocus = true) {
+    elements["add-model-panel"].hidden = true;
+    elements["add-model-button"].setAttribute("aria-expanded", "false");
+    elements["new-model-id"].value = "";
+    elements["new-model-error"].hidden = true;
+    elements["new-model-id"].setAttribute("aria-invalid", "false");
+    if (returnFocus) elements["add-model-button"].focus();
+  }
+
+  function addModel() {
+    if (busy) return;
+    const modelo = elements["new-model-id"].value.trim();
+    if (!modelIdentifier.test(modelo)) {
+      elements["new-model-error"].textContent = "Informe o identificador do modelo, com até 200 caracteres e sem espaços. Use letras, números ou . _ : / @ + -.";
+      elements["new-model-error"].hidden = false;
+      elements["new-model-id"].setAttribute("aria-invalid", "true");
+      elements["new-model-id"].focus();
+      return;
+    }
+    const provedor = elements["provider-select"].value;
+    const existing = savedModels.some((entry) => entry.provedor === provedor && entry.modelo === modelo);
+    if (!existing) savedModels.push({ provedor, modelo });
+    let persisted = true;
+    try { localStorage.setItem(modelsStorageKey, JSON.stringify(savedModels)); } catch (_) { persisted = false; }
+    renderModels(modelo);
+    closeModelPanel(false);
+    invalidateConfiguration();
+    elements["model-feedback"].textContent = persisted ? `${modelo} selecionado para a justificativa.` : `${modelo} selecionado. O navegador não permitiu salvar a lista; ela ficará disponível enquanto esta página estiver aberta.`;
+    elements["model-select"].focus();
+  }
+
   function inputState(text) {
     const trimmed = trimWhitespace(text);
     const words = trimmed ? trimmed.split(whitespaceRun).length : 0;
@@ -52,6 +140,7 @@
 
   function updateInput() {
     const state = inputState(elements.relato.value);
+    const configuration = configurationState();
     elements["word-count"].textContent = `${state.words} / 400 palavras`;
     elements["paragraph-count"].textContent = `${state.paragraphs} / 2 parágrafos`;
     elements["word-count"].classList.toggle("count-invalid", state.words > 400);
@@ -59,7 +148,7 @@
     elements["input-error"].textContent = state.error;
     elements["input-error"].hidden = !touched || !state.error;
     elements.relato.setAttribute("aria-invalid", String(touched && Boolean(state.error)));
-    elements["search-button"].disabled = busy || !ready || Boolean(state.error);
+    elements["search-button"].disabled = busy || !ready || Boolean(state.error) || Boolean(configuration.error);
     return state;
   }
 
@@ -71,6 +160,9 @@
     elements["copy-button"].disabled = value || !currentResult;
     elements["export-button"].disabled = value || !currentResult;
     elements["search-button"].textContent = value ? "Buscando ligações…" : "Buscar ligações →";
+    for (const id of ["provider-select", "api-key", "model-select", "add-model-button", "new-model-id", "save-model-button", "cancel-model-button"]) {
+      elements[id].disabled = value;
+    }
     updateInput();
   }
 
@@ -121,14 +213,10 @@
       elements["environment-badge"].textContent = ready ? "Pronto" : "Requer configuração";
       elements["environment-badge"].className = `badge ${ready ? "badge-ready" : "badge-warning"}`;
       const corpus = status.corpus || {};
-      const provider = status.provedor || {};
       const parts = [];
       if (corpus.fragmentos) parts.push(`${countFormat(corpus.fragmentos)} fragmentos${corpus.blocos ? ` em ${countFormat(corpus.blocos)} blocos` : ""} no acervo local`);
-      if (provider.provedor && provider.modelo) {
-        const providerName = { openrouter: "OpenRouter", openai: "OpenAI" }[provider.provedor] || provider.provedor;
-        parts.push(`Justificativas: ${providerName} · ${provider.modelo}`);
-      }
-      elements["environment-description"].textContent = parts.join(". ") || (ready ? "Acervo, E5 e modelo de justificativas disponíveis." : "Resolva os itens abaixo e confira o ambiente novamente.");
+      if (ready) parts.push("E5 disponível. Escolha abaixo o modelo da justificativa e informe sua chave");
+      elements["environment-description"].textContent = parts.join(". ") || "Resolva os itens abaixo e confira o ambiente novamente.";
       const problems = list(status.problemas);
       elements["environment-problems"].replaceChildren();
       if (problems.length) {
@@ -359,9 +447,15 @@
     event.preventDefault();
     if (busy) return;
     touched = true;
+    configurationTouched = true;
     const state = updateInput();
     if (state.error) {
       elements.relato.focus();
+      return;
+    }
+    const configuration = configurationState();
+    if (configuration.error) {
+      elements[configuration.hasModel ? "api-key" : "model-select"].focus();
       return;
     }
     if (!ready) return;
@@ -372,7 +466,12 @@
     setBusy(true);
     showProgress("Iniciando a busca", "Preparando consultas com P1, P2 e o relato completo.");
     try {
-      const response = await fetchJSON("/api/buscas", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ texto: originalText }) });
+      const response = await fetchJSON("/api/buscas", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+        texto: originalText,
+        provedor: elements["provider-select"].value,
+        modelo: elements["model-select"].value,
+        chave_api: elements["api-key"].value.trim(),
+      }) });
       if (!response.id) throw new Error("O servidor não informou o identificador da busca.");
       currentJob = response.id;
       pollJob(currentJob);
@@ -432,6 +531,32 @@
   }
 
   elements["search-form"].addEventListener("submit", submitSearch);
+  elements["api-key"].addEventListener("input", invalidateConfiguration);
+  elements["model-select"].addEventListener("change", invalidateConfiguration);
+  elements["provider-select"].addEventListener("change", () => {
+    if (busy) return;
+    elements["api-key"].value = "";
+    renderModels();
+    closeModelPanel(false);
+    elements["model-feedback"].textContent = "Provedor alterado. Informe a chave correspondente e selecione um modelo.";
+    invalidateConfiguration();
+  });
+  elements["add-model-button"].addEventListener("click", () => {
+    if (busy) return;
+    if (!elements["add-model-panel"].hidden) {
+      closeModelPanel();
+      return;
+    }
+    elements["add-model-panel"].hidden = false;
+    elements["add-model-button"].setAttribute("aria-expanded", "true");
+    elements["new-model-id"].focus();
+  });
+  elements["save-model-button"].addEventListener("click", addModel);
+  elements["cancel-model-button"].addEventListener("click", () => closeModelPanel());
+  elements["new-model-id"].addEventListener("keydown", (event) => {
+    if (event.key === "Enter") { event.preventDefault(); addModel(); }
+    if (event.key === "Escape") { event.preventDefault(); closeModelPanel(); }
+  });
   elements.relato.addEventListener("input", () => {
     touched = true;
     resetResults();
@@ -451,6 +576,8 @@
   elements["refresh-status"].addEventListener("click", checkStatus);
   elements["copy-button"].addEventListener("click", copyTable);
   elements["export-button"].addEventListener("click", exportJSON);
+  elements["api-key"].value = "";
+  renderModels();
   updateInput();
   checkStatus();
 })();

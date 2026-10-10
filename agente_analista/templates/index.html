@@ -31,6 +31,38 @@
         <section class="input-card" aria-labelledby="input-title">
           <div class="section-heading"><span class="step-number" aria-hidden="true">01</span><div><h2 id="input-title">Seu relato</h2><p class="muted">Dois parágrafos, separados por uma linha em branco. Até 400 palavras no total.</p></div></div>
           <form id="search-form" novalidate>
+            <fieldset class="provider-settings">
+              <legend>Justificativas</legend>
+              <p class="field-help settings-intro">Escolha o provedor da sua chave e inclua o identificador do modelo que deseja usar.</p>
+              <div class="settings-grid">
+                <div class="setting-field">
+                  <label for="provider-select">Provedor</label>
+                  <select id="provider-select" name="provedor"><option value="openrouter">OpenRouter</option><option value="openai">OpenAI</option></select>
+                </div>
+                <div class="setting-field">
+                  <label for="model-select">Modelo da justificativa</label>
+                  <div class="model-controls">
+                    <select id="model-select" name="modelo" aria-describedby="model-help configuration-error"><option value="">Inclua um modelo pelo botão +</option></select>
+                    <button id="add-model-button" class="button button-secondary button-icon" type="button" aria-label="Incluir modelo" aria-expanded="false" aria-controls="add-model-panel" title="Incluir modelo"><span aria-hidden="true">+</span></button>
+                  </div>
+                  <p id="model-help" class="field-help">A lista começa vazia. Os modelos incluídos ficam salvos neste navegador.</p>
+                </div>
+                <div class="setting-field api-key-field">
+                  <label for="api-key">Chave de API</label>
+                  <input id="api-key" name="chave_api" type="password" autocomplete="off" spellcheck="false" autocapitalize="none" maxlength="4096" aria-describedby="api-key-help configuration-error" placeholder="Cole a chave do provedor escolhido">
+                  <p id="api-key-help" class="field-help">A chave fica somente nesta página enquanto ela estiver aberta e é enviada ao servidor local para fazer a avaliação. Ela não é salva.</p>
+                </div>
+              </div>
+              <div id="add-model-panel" class="add-model-panel" hidden>
+                <label for="new-model-id">Identificador do modelo</label>
+                <input id="new-model-id" type="text" autocomplete="off" spellcheck="false" autocapitalize="none" maxlength="200" aria-describedby="new-model-help new-model-error" placeholder="Ex.: openai/gpt-4.1-mini">
+                <p id="new-model-help" class="field-help">Use o identificador informado pelo provedor, incluindo o nome antes da barra quando houver. Escolha um modelo que aceite respostas estruturadas com JSON Schema.</p>
+                <p id="new-model-error" class="field-error" role="alert" hidden></p>
+                <div class="form-actions"><button id="save-model-button" class="button button-primary" type="button">Adicionar modelo</button><button id="cancel-model-button" class="button button-secondary" type="button">Cancelar</button></div>
+              </div>
+              <p id="configuration-error" class="field-error" role="alert" hidden></p>
+              <p id="model-feedback" class="field-help" role="status" aria-live="polite"></p>
+            </fieldset>
             <label for="relato">Texto do relato</label>
             <textarea id="relato" name="relato" rows="10" spellcheck="true" aria-describedby="input-help input-counts input-error" placeholder="Cole o primeiro parágrafo aqui.&#10;&#10;Cole o segundo parágrafo aqui."></textarea>
             <p id="input-help" class="field-help">O texto será preservado como recebido. A busca considera os dois parágrafos e o relato completo. Para avaliar as ligações, o relato e os trechos recuperados serão enviados ao provedor de IA configurado.</p>

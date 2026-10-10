@@ -41,7 +41,6 @@ class ServicoAnalista:
             return self.corpus
 
     def status(self):
-        from .ligacoes import status_configuracao
         problemas = []
         try:
             corpus = self._corpus()
@@ -75,16 +74,9 @@ class ServicoAnalista:
                 raise ValueError("O download do modelo E5 está ausente ou incompleto.")
         except (OSError, ValueError, KeyError, TypeError):
             problemas.append("Prepare o modelo executando: bash agente_analista/preparar_e5_mac_intel.sh")
-        provedor = status_configuracao()
-        if not provedor.get("chave_configurada"):
-            problemas.append("Configure NARRATIVA_API_KEY no terminal do servidor para gerar as justificativas. "
-                             "O comando bash agente_analista/iniciar_mac_intel.sh solicita a chave com entrada oculta.")
-        if provedor.get("erro"):
-            problemas.append(provedor["erro"])
-        return {"pronto": not problemas, "problemas": problemas, "provedor": provedor,
-                "corpus": contagens}
+        return {"pronto": not problemas, "problemas": problemas, "corpus": contagens}
 
-    def executar(self, relato, progresso):
+    def executar(self, relato, progresso, *, provedor, modelo, chave_api):
         from .busca import Buscador
         from .ligacoes import avaliar_ligacoes
         from embeddings_e5 import criar_gerador_padrao
@@ -94,8 +86,9 @@ class ServicoAnalista:
             self.buscador = Buscador(corpus, criar_gerador_padrao(caminho_config=self.caminho_config))
         recuperacao = self.buscador.buscar(relato, progresso=progresso)
         progresso("Avaliando os candidatos e conferindo as citações")
-        ligacoes = avaliar_ligacoes(relato, recuperacao)
+        ligacoes = avaliar_ligacoes(relato, recuperacao, provedor=provedor, modelo=modelo, chave_api=chave_api)
         return {"relato": relato, **recuperacao, **ligacoes,
+                "justificativas": {"provedor": provedor, "modelo": modelo},
                 "posicoes": "Pontos de código Unicode, início inclusivo e fim exclusivo [inicio, fim).",
                 "aviso": "Pontuações ordenam candidatos; a pertinência interpretativa exige revisão."}
 
@@ -145,12 +138,12 @@ def criar_app(config=None, *, servico=None):
             if id != estado["ativa"] and agora - tarefas[id]["criada"] > 3600:
                 del tarefas[id]
 
-    def executar(tarefa_id, relato):
+    def executar(tarefa_id, relato, configuracao_api):
         def progresso(etapa):
             with lock:
                 tarefas[tarefa_id]["etapa"] = etapa
         try:
-            resultado = servico.executar(relato, progresso)
+            resultado = servico.executar(relato, progresso, **configuracao_api)
             with lock:
                 tarefas[tarefa_id].update(estado="concluido", etapa="Busca concluída", resultado=resultado)
         except Exception as erro:
@@ -160,10 +153,13 @@ def criar_app(config=None, *, servico=None):
             from contratos_vetorizacao import ErroVetorizacao
             conhecidos = (ErroEntrada, ErroBusca, ErroCorpus, ErroLigacoes, ErroVetorizacao)
             mensagem = str(erro) if isinstance(erro, conhecidos) else "Não foi possível concluir a busca. Confira o ambiente e tente novamente."
+            if configuracao_api["chave_api"] in mensagem:
+                mensagem = "Não foi possível concluir a avaliação. Confira a chave, o provedor e o modelo na página."
             app.logger.error("Busca não concluída (%s)", type(erro).__name__)
             with lock:
                 tarefas[tarefa_id].update(estado="erro", etapa="Busca interrompida", erro=mensagem)
         finally:
+            configuracao_api.clear()
             with lock:
                 estado["ativa"] = None
 
@@ -178,6 +174,19 @@ def criar_app(config=None, *, servico=None):
             relato = validar_relato(dados["texto"])
         except ErroEntrada as erro:
             return jsonify(erro=str(erro), contagem=erro.contagem), 400
+        from api_narrativas import ErroAPINarrativa, _obter_chave_api
+        from .ligacoes import ErroLigacoes, _configuracao
+        if not isinstance(dados.get("chave_api"), str) or not dados["chave_api"].strip():
+            return jsonify(erro="Informe a chave de API na página para gerar as justificativas."), 400
+        if not isinstance(dados.get("modelo"), str) or not dados["modelo"].strip():
+            return jsonify(erro="Adicione e selecione um modelo para as justificativas."), 400
+        if dados.get("provedor") not in ("openrouter", "openai"):
+            return jsonify(erro="Selecione OpenRouter ou OpenAI como provedor das justificativas."), 400
+        try:
+            provedor, modelo = _configuracao(dados["provedor"], dados["modelo"])
+            chave = _obter_chave_api(dados["chave_api"])
+        except (ErroAPINarrativa, ErroLigacoes):
+            return jsonify(erro="Confira a chave de API e o identificador do modelo informado na página."), 400
         configuracao = servico.status()
         if not configuracao["pronto"]:
             return jsonify(erro=" ".join(configuracao["problemas"]), problemas=configuracao["problemas"]), 503
@@ -193,7 +202,7 @@ def criar_app(config=None, *, servico=None):
             tarefa_id = str(uuid4())
             tarefas[tarefa_id] = {"id": tarefa_id, "estado": "executando", "etapa": "Preparando a busca", "criada": agora}
             estado["ativa"] = tarefa_id
-        executor.submit(executar, tarefa_id, relato)
+        executor.submit(executar, tarefa_id, relato, {"provedor": provedor, "modelo": modelo, "chave_api": chave})
         return jsonify(id=tarefa_id), 202
 
     @app.get("/api/buscas/<tarefa_id>")
