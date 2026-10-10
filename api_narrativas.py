@@ -9,8 +9,9 @@ from __future__ import annotations
 import json
 import os
 import socket
+import ssl
 from urllib.error import HTTPError, URLError
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
 
 PROVEDOR_PADRAO = "openrouter"
@@ -81,6 +82,51 @@ class _SemRedirecionamento(HTTPRedirectHandler):
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
+
+
+def _contexto_https():
+    """Some as CA do Certifi às nativas, mantendo a verificação TLS integral.
+
+    O Python.org no Mac pode ainda não ter executado Install Certificates.command.
+    O ambiente E5 já usa Certifi com Requests. Acrescentamos essas mesmas CA sem
+    substituir as CA do sistema ou os caminhos SSL_CERT_FILE/SSL_CERT_DIR.
+    """
+    try:
+        contexto = ssl.create_default_context()
+        try:
+            import certifi
+        except ImportError:
+            # O projeto principal também funciona sem os extras E5 instalados.
+            pass
+        else:
+            contexto.load_verify_locations(cafile=certifi.where())
+        personalizado = os.environ.get("REQUESTS_CA_BUNDLE") or os.environ.get("CURL_CA_BUNDLE")
+        if personalizado:
+            contexto.load_verify_locations(cafile=personalizado)
+        return contexto
+    except (OSError, ValueError):
+        raise ErroAPINarrativa("Não foi possível carregar os certificados HTTPS do Python. "
+                               "Confira a instalação e os caminhos de certificados configurados.") from None
+
+
+def _erro_conexao(erro):
+    """Classifique somente tipos e sinais conhecidos; nunca exponha detalhes brutos."""
+    motivo = erro.reason if isinstance(erro, URLError) else erro
+    if isinstance(motivo, ssl.SSLCertVerificationError):
+        mensagem = ("O Python não conseguiu verificar o certificado HTTPS do provedor. "
+                    "Confira os certificados do Python e execute o diagnóstico de conexão.")
+    elif isinstance(motivo, ssl.SSLError):
+        mensagem = ("Não foi possível estabelecer a conexão HTTPS com o provedor. "
+                    "Confira os certificados, a rede e o diagnóstico de conexão.")
+    elif isinstance(motivo, (socket.timeout, TimeoutError)):
+        mensagem = "O provedor demorou demais para responder. Solicite a geração novamente."
+    elif isinstance(motivo, socket.gaierror):
+        mensagem = "Não foi possível localizar o endereço do provedor. Verifique a conexão e o DNS da rede."
+    elif isinstance(motivo, OSError) and "tunnel connection failed" in str(motivo).lower():
+        mensagem = "O proxy da rede recusou a conexão HTTPS com o provedor. Confira o proxy, a VPN ou tente outra rede."
+    else:
+        mensagem = "Não foi possível conectar ao provedor. Verifique a conexão e execute o diagnóstico de conexão."
+    return ErroAPINarrativa(mensagem)
 
 
 def _provedor_valido(provedor: str) -> str:
@@ -285,23 +331,17 @@ def _enviar_mensagens(*, provedor, modelo, construtor, contexto, nome_contexto="
     pedido = Request(_ENDPOINTS[provedor], data=corpo, method="POST", headers={
         "Authorization": f"Bearer {chave}", "Content-Type": "application/json", "Accept": "application/json",
     })
-    # HTTPSHandler padrão preserva a validação TLS do Python. Redirecionamentos
-    # são recusados antes de criar um novo pedido com Authorization.
-    cliente = build_opener(_SemRedirecionamento())
+    # Preserve a validação TLS e as CA locais; recuse redirecionamentos antes de
+    # criar qualquer novo pedido com Authorization.
+    cliente = build_opener(_SemRedirecionamento(), HTTPSHandler(context=_contexto_https()))
     try:
         with cliente.open(pedido, timeout=TIMEOUT_SEGUNDOS) as resposta:
             dados = resposta.read(LIMITE_RESPOSTA_BYTES + 1)
     except HTTPError as erro:
         erro.close()
         raise _erro_http(erro.code) from None
-    except (socket.timeout, TimeoutError):
-        raise ErroAPINarrativa("O provedor demorou demais para responder. Solicite a geração novamente.") from None
-    except URLError as erro:
-        if isinstance(erro.reason, (socket.timeout, TimeoutError)):
-            raise ErroAPINarrativa("O provedor demorou demais para responder. Solicite a geração novamente.") from None
-        raise ErroAPINarrativa("Não foi possível conectar ao provedor. Verifique a conexão e tente novamente.") from None
-    except OSError:
-        raise ErroAPINarrativa("Não foi possível conectar ao provedor. Verifique a conexão e tente novamente.") from None
+    except (URLError, OSError) as erro:
+        raise _erro_conexao(erro) from None
     return _interpretar_resposta(dados)
 
 

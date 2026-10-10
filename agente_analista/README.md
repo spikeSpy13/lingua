@@ -14,8 +14,9 @@ git -c http.version=HTTP/1.1 pull --ff-only
 bash agente_analista/iniciar_mac_intel.sh
 ```
 
-O iniciador usa o E5 que você já preparou, instala a dependência da página
-(Flask 3.1.3) quando necessário e solicita a chave do OpenRouter com entrada
+O iniciador usa o E5 que você já preparou, instala as dependências da página
+(Flask 3.1.3 e Certifi 2026.7.22) quando necessário, testa a conexão HTTPS
+com uma consulta pública e solicita a chave do OpenRouter com entrada
 oculta. Cole a chave e pressione Enter; ela permanece somente no processo do
 servidor, sem ser escrita no repositório ou enviada ao navegador.
 
@@ -70,6 +71,37 @@ instance/venv-agente-e5-intel/bin/python -m agente_analista.app
 O servidor escuta somente em `127.0.0.1:5002`, separado do Lingua na porta 5001.
 Usa uma execução por vez e mostra o progresso na página. Configure o cache via
 `HF_HOME`/`HF_HUB_CACHE` se usar outro caminho.
+
+### Diagnosticar a conexão com o provedor
+
+O iniciador executa um diagnóstico público antes de pedir a chave. O teste
+apenas consulta o endereço do provedor por GET, sem autenticação, envio do
+relato ou geração de texto; não consome créditos. Para executá-lo separadamente:
+
+```bash
+instance/venv-agente-e5-intel/bin/python -m agente_analista.diagnosticar_conexao
+```
+
+As mensagens distinguem certificados HTTPS, DNS, tempo de conexão e bloqueios
+de proxy. Receber HTTP 401 no teste da OpenAI é esperado, pois a consulta não
+envia chave; confirma conexão HTTPS, sem verificar autenticação ou saldo.
+
+O transporte da API soma os certificados do Certifi aos certificados nativos
+do Python, preservando a verificação de certificado e de hostname. Isso atende
+ao Python instalado pelo site oficial no Mac, mesmo quando os certificados
+globais ainda não foram preparados. Caminhos explícitos `SSL_CERT_FILE`,
+`SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE` e `CURL_CA_BUNDLE` são respeitados.
+
+Se o diagnóstico ainda indicar falha de certificado e o instalador oficial
+estiver disponível, execute:
+
+```bash
+open "/Applications/Python 3.12/Install Certificates.command"
+```
+
+Depois, repita o diagnóstico. Se houver proxy ou VPN na rede, siga a indicação
+do diagnóstico. Chave inválida e saldo insuficiente têm mensagens próprias
+quando a chamada de avaliação consegue alcançar o provedor.
 
 ## Como a busca funciona
 

@@ -5,6 +5,8 @@ import io
 import json
 import os
 import socket
+import ssl
+import sys
 import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
@@ -326,6 +328,27 @@ class ClienteNarrativaTests(unittest.TestCase):
                 self.assertTrue(erro.__suppress_context__)
                 self.cliente.open.assert_called_once()
 
+    def test_certificado_dns_e_proxy_tem_mensagens_distintas_seguras(self):
+        for falha, mensagem in (
+                (ssl.SSLCertVerificationError(1, self.CHAVE_FICTICIA), "certificado HTTPS"),
+                (URLError(ssl.SSLCertVerificationError(1, self.TEXTO_PRIVADO)), "certificado HTTPS"),
+                (URLError(ssl.SSLError(1, self.CHAVE_FICTICIA)), "conexão HTTPS"),
+                (URLError(socket.gaierror(-2, self.CHAVE_FICTICIA)), "DNS"),
+                (URLError(OSError("Tunnel connection failed: 403 " + self.CHAVE_FICTICIA)), "proxy")):
+            with self.subTest(falha=type(falha).__name__):
+                self.cliente.open.reset_mock()
+                self.cliente.open.side_effect = falha
+                erro = self.verificar_erro_seguro(self.gerar, mensagem)
+                self.assertTrue(erro.__suppress_context__)
+                self.cliente.open.assert_called_once()
+
+    def test_https_preserva_validacao_de_certificado_e_hostname(self):
+        contexto = api._contexto_https()
+        self.assertEqual(contexto.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(contexto.check_hostname)
+        self.gerar()
+        self.assertIsInstance(self.opener_factory.call_args.args[1], api.HTTPSHandler)
+
     def test_respostas_incompletas_recusadas_ou_invalidas_sao_rejeitadas(self):
         payloads = [
             {}, [], {"error": {"message": self.CHAVE_FICTICIA}},
@@ -356,6 +379,51 @@ class ClienteNarrativaTests(unittest.TestCase):
         self.verificar_erro_seguro(lambda: self.gerar(planejamento="campo removido"), "contexto")
         self.verificar_erro_seguro(lambda: api.gerar_texto(indice=1), "contexto")
         self.cliente.open.assert_not_called()
+
+
+class CertificadosHTTPSTests(unittest.TestCase):
+    def test_python_sem_cas_nativas_recebe_cas_certifi_sem_desativar_tls(self):
+        try:
+            import certifi
+        except ImportError:
+            self.skipTest("Certifi é instalado com o ambiente do agente.")
+        self.assertTrue(certifi.where())
+        vazio = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        self.assertEqual(vazio.cert_store_stats()["x509_ca"], 0)
+        with patch("api_narrativas.ssl.create_default_context", return_value=vazio), \
+                patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("REQUESTS_CA_BUNDLE", None)
+            os.environ.pop("CURL_CA_BUNDLE", None)
+            contexto = api._contexto_https()
+        self.assertGreater(contexto.cert_store_stats()["x509_ca"], 0)
+        self.assertEqual(contexto.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(contexto.check_hostname)
+
+    def test_cas_nativas_continuam_confiaveis_apos_somar_certifi(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("REQUESTS_CA_BUNDLE", None)
+            os.environ.pop("CURL_CA_BUNDLE", None)
+            nativas = ssl.create_default_context()
+            contexto = api._contexto_https()
+        self.assertTrue(set(nativas.get_ca_certs(binary_form=True)).issubset(
+            set(contexto.get_ca_certs(binary_form=True))))
+        self.assertEqual(contexto.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(contexto.check_hostname)
+
+    def test_projeto_principal_sem_certifi_mantem_certificados_nativos(self):
+        with patch.dict(sys.modules, {"certifi": None}), patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("REQUESTS_CA_BUNDLE", None)
+            os.environ.pop("CURL_CA_BUNDLE", None)
+            contexto = api._contexto_https()
+        self.assertEqual(contexto.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(contexto.check_hostname)
+
+    def test_caminho_customizado_invalido_gera_acao_sem_expor_valor(self):
+        with patch.dict(os.environ, {"REQUESTS_CA_BUNDLE": "/arquivo-inexistente-com-dado-privado.pem"}):
+            with self.assertRaises(api.ErroAPINarrativa) as capturado:
+                api._contexto_https()
+        self.assertIn("certificados HTTPS", str(capturado.exception))
+        self.assertNotIn("dado-privado", str(capturado.exception))
 
 
 if __name__ == "__main__":
