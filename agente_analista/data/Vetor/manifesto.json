@@ -1,0 +1,25 @@
+{
+  "versao": "freud_index_v2_e5_fragmentos_1",
+  "corpus_zip_sha256": "2c9f1928f590fc5ab1410be6142b846208c89f91357751a9d827608891cd920a",
+  "fonte_chunks": "freud-agent/data/chunks.jsonl",
+  "modelo": "intfloat/multilingual-e5-large",
+  "revisao": "3d7cfbdacd47fdda877c5cd8a79fbcc4f2a574f3",
+  "prefixo_passagens": "passage: ",
+  "prefixo_consultas": "query: ",
+  "tokens_maximo": 512,
+  "margem_tokens": 8,
+  "tipo_vetor": "float32",
+  "dimensao": 1024,
+  "normalizacao": "L2",
+  "modelo_de_agregacao": "nenhum; recuperar fragmentos e reunir por bloco_id",
+  "blocos": 6249,
+  "fragmentos": 8087,
+  "referencias_arquivo": "fragmentos.jsonl",
+  "vetores_arquivo": "vetores_fragmentos_e5.npy",
+  "bibliotecas": {
+    "sentence_transformers": "6.1.0",
+    "transformers": "5.19.0",
+    "torch": "2.11.0+cu130"
+  },
+  "checkpoint_final": 8087
+}
